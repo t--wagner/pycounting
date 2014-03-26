@@ -144,7 +144,7 @@ class BinaryData(object):
 
         # Set the position if not None
         if not position is None:
-            self.position = position
+            self.position = long(position)
 
         # Creat a list to store the data
         data = []
@@ -165,7 +165,7 @@ class BinaryData(object):
                 except IndexError:
                     break
 
-        return data
+        return np.array(data)
 
 
 def fit_levels(fctrace, window, start_values, fitfilename, offsets=None,
@@ -207,7 +207,7 @@ def fit_levels(fctrace, window, start_values, fitfilename, offsets=None,
         y = histogram[0]
 
         try:
-            fit_values, b = curve_fit(gauss, x, y, fit_values)
+            fit_values, b = curve_fit(normal, x, y, fit_values)
         except RuntimeError:
             if exceptions:
                 raise RuntimeError
@@ -229,20 +229,20 @@ def fit_levels(fctrace, window, start_values, fitfilename, offsets=None,
         if plotting:
             #Plot Data
             ax = fig.add_subplot(xsubplts, ysubplts, 2 * nr - 1)
-            ax.set_title('t = ' + str(offset)
+            ax.set_title('t = ' + str(offset))
             xdata = np.array(range(offset, offset + plotting))
-            ydata = np.array(data[:plotting]
+            ydata = np.array(data[:plotting])
             ax.plot(xdata, ydata)
             ax.set_xlabel('t (ms)')
             ax.set_ylabel('I (nA)')
 
             #Plot Histogram
             ax = fig.add_subplot(xsubplts, ysubplts, 2 * nr)
-            ax.set_title('t = ' + str(offset)
+            ax.set_title('t = ' + str(offset))
             xdata = histogram[0]
             ydata = histogram[1][:-1]
             ax.plot(xdata, ydata)
-            ax.plot(gauss(x, *fit_values), x)
+            ax.plot(normal(x, *fit_values), x)
 
     # Optimize subplot spaceing
     if plotting:
@@ -252,24 +252,108 @@ def fit_levels(fctrace, window, start_values, fitfilename, offsets=None,
     fitfile.close()
 
 
+def read_fitfile(fitfile):
+    """Read the fitting parameters file created by the fit_levels fucntion.
+
+    """
+
+    # Create list to store the fit parameters
+    fit_parameters = []
+
+    # Open fitfile
+    with open(fitfile) as fobj:
+
+        # Read all data
+        for line in fobj:
+            # Make a list from line
+            line = line.replace('\n', '').replace(' ', '').split(',')
+
+            # Turn all values to float
+            line = [float(value) for value in line]
+
+            # Add line to parameter list
+            fit_parameters.append(line)
+
+    # Transpose the parameters and return numpy array
+    return np.transpose(fit_parameters)
+
+
+def tc(sampling_rate, timestr='s'):
+    """Returns the time constant based on the sampling rate.
+
+    """
+
+    sampling_rate = int(sampling_rate)
+
+    if timestr == 'us':
+        time_constant = sampling_rate / 1e6
+    elif timestr == 'ms':
+        time_constant = sampling_rate / 1e3
+    elif timestr == 's':
+        time_constant = sampling_rate
+    elif timestr == 'm':
+        time_constant = sampling_rate * 60
+    elif timestr == 'h':
+        time_constant = sampling_rate * 60 * 60
+    elif timestr == 'd':
+        time_constant = sampling_rate * 60 * 60 * 24
+    else:
+        raise ValueError('timestr is wrong.')
+
+    return float(time_constant)
+
+
 class Histogram(object):
 
     def __init__(self):
         self.elements = 0
         self.comment = ''
-        data = None
+        self.data = np.array([])
+
+    def __getitem__(self, key):
+        return self.data[key]
+
+    def __repr__(self):
+        return self.data.__repr__()
+
+    def bins(self):
+        return self.data[0]
+
+    def frequencies(self):
+        return self.data[1]
+
+
+def create_histogram(data, normed=True, comment=''):
+    """Create a histogram out of a data list.
+
+    """
+
+    # Create histogram instance
+    histogram = Histogram()
+
+    # Make numpy array out of data
+    data = np.array(data)
+
+    # Create histogram
+    nr_of_bins = data.max() - data.min()
+    elements, bins = np.histogram(data, nr_of_bins, normed=normed)
+
+    histogram.elements = sum(elements)
+    histogram.comment = comment
+    histogram.data = np.array([bins[:-1], elements])
+    return histogram
 
 
 def read_histogram(histogram_file):
 
-    histogram = Histogram()
+    histograms = []
 
     bins = []
     items = []
 
     with open(histogram_file, 'r') as histoobj:
 
-        section = ''
+        section = None
 
         for line in histoobj:
 
@@ -279,44 +363,122 @@ def read_histogram(histogram_file):
             try:
                 if (line[0] == '<' and line[-1] == '>'):
                     section = line[1:-1]
+
+                    # Read section data
+                    if section == 'fchistogram':
+                        histograms.append(Histogram())
+                        del bins[:]
+                        del items[:]
+                    elif section == '/fchistogram':
+                        histograms[-1].data = np.array([bins, items])
+                        section = None
+                    elif section == '/elements':
+                        section = None
+                    elif section == '/comment':
+                        section = None
+                    elif section == '/data':
+                        section = None
                     continue
             except:
                 pass
 
-            # Read section data
             if section == 'elements':
-                histogram.elements = int(line)
+                histograms[-1].elements = int(line)
             elif section == 'comment':
-                histogram.comment += line + '\n'
+                histograms[-1].comment += line
             elif section == 'data':
                 line = line.replace(' ', '').split(';')
                 bins.append(float(line[0]))
                 items.append(int(line[1]))
 
-        histogram.data = np.array([bins, items])
+    return histograms
 
-    return histogram
+
+def linear(xdata, slope=1, yintercept=0):
+
+    # Make numpy array out of data
+    xdata = np.array(xdata)
+
+    return slope * xdata + yintercept
+
+
+def fit_linear(xdata, ydata, slope=1, yintercept=0, function=True):
+
+    ydata = np.array(ydata)
+    start_paras = np.array([slope, yintercept])
+
+    fit = curve_fit(linear, xdata, ydata, start_paras)
+
+    if function:
+        return linear(xdata, *fit[0])
+    else:
+        return fit
+
+
+def exp(xdata, a=1, tau=1):
+
+    # Make numpy array out of data
+    xdata = np.array(xdata)
+
+    return a * np.exp(tau * xdata)
+
+
+def fit_exp(xdata, ydata, a=1, tau=1, function=True):
+
+    xdata = np.array(xdata)
+    ydata = np.array(ydata)
+    start_paras = np.array([a, tau])
+
+    fit = curve_fit(exp, xdata, ydata, start_paras)
+
+    if function:
+        return exp(xdata, *fit[0])
+    else:
+        return fit
 
 
 # Multiple Gauss functions added
-def gauss(x, *parameter):
+def normal(x, *parameters):
+    """Create a gauss sum function from on the parameter list.
 
-    def gauss(x, sigma, mu, A):
+    """
+
+    # Define gauss function
+    def normal(x, sigma, mu, A):
         x = np.array(x)
         return A * np.exp(-(x - mu)**2 / (2. * sigma**2))
 
     x = np.array(x)
     res = np.zeros(x.size)
 
-    pars_list = [parameter[i:i+3] for i in range(0, len(parameter), 3)]
+    pars_list = [parameters[i:i+3] for i in range(0, len(parameters), 3)]
 
     for pars in pars_list:
-        res += gauss(x, *pars)
+        res += normal(x, *pars)
 
     return res
 
 
+def fit_normal(xdata, ydata, function=True, *parameters):
+
+        # Make numpy arrays out of data
+        xdata = np.array(xdata)
+        ydata = np.array(ydata)
+
+        start_paras = np.array(parameters)
+
+        fit = curve_fit(normal, xdata, ydata, start_paras)
+
+        if function:
+            return normal(xdata, *fit[0])
+        else:
+            return fit
+
+
 def read_fcsignal(fcsignal_file, start_position=0, steps=-1):
+    """Read data from fcsignal.
+
+    """
 
     level = []
     position = []
@@ -351,9 +513,11 @@ def read_fcsignal(fcsignal_file, start_position=0, steps=-1):
 
 
 def read_cummulants(cummulants_file):
+    """Read the cummulants from file.
 
-    cummulants = []
-    times = []
+    """
+
+    data = []
 
     with open(cummulants_file, 'r') as cummulants_fobj:
 
@@ -362,7 +526,6 @@ def read_cummulants(cummulants_file):
             line = line.split(';')
             line = [float(cummulant) for cummulant in line]
 
-            times.append(line[0])
-            cummulants.append(line[1:])
+            data.append(line)
 
-    return [np.array(times), np.transpose(cummulants)]
+    return np.transpose(data)
