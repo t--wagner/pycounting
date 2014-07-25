@@ -4,13 +4,12 @@ import os
 import struct
 import time
 import numpy as np
-import matplotlib.pyplot as plt
 from scipy.optimize import curve_fit
 
 
 class BinaryData(object):
 
-    def __init__(self, filelist, struct_format):
+    def __init__(self, filelist, datatype, byte_order=None):
 
         # Store the filelist
         self._filelist = filelist
@@ -24,7 +23,16 @@ class BinaryData(object):
         self._fileobj = self._fileobjs[0]
 
         # Store the struct information
-        self._struct_format = struct_format
+        if datatype == 'int':
+            self._struct_format = 'i'
+        elif datatype == 'ushort':
+            self._struct_format = 'H'
+        else:
+            self._struct_format = datatype
+
+        if byte_order:
+            self._struct_format = byte_order + self._struct_format
+
         self._datapointsize = struct.calcsize(self._struct_format)
 
         # Calculate the size in bytes of all files
@@ -146,6 +154,8 @@ class BinaryData(object):
         if not position is None:
             self.position = long(position)
 
+        start  = self.position
+
         # Creat a list to store the data
         data = []
 
@@ -165,11 +175,13 @@ class BinaryData(object):
                 except IndexError:
                     break
 
-        return np.array(data)
+        stop = self.position
+
+        return np.array(data), (start, stop)
 
 
 def fit_levels(fctrace, window, start_values, fitfilename, offsets=None,
-               printing=True, plotting=False, timing=False, exceptions=True):
+               printing=True, timing=False, exceptions=True):
 
     # Create offsets from window length and fctrace
     if not offsets:
@@ -184,10 +196,6 @@ def fit_levels(fctrace, window, start_values, fitfilename, offsets=None,
     fit_values = np.array(start_values)
     data = []
 
-    if plotting:
-        xsubplts = len(offsets)
-        ysubplts = 2
-        fig = plt.figure(figsize=(15, 3 * xsubplts))
 
     # Cycle through the data
     for nr, offset in enumerate(offsets, 1):
@@ -196,7 +204,7 @@ def fit_levels(fctrace, window, start_values, fitfilename, offsets=None,
         tstart = time.time()
 
         # Read data in window
-        data = np.array(fctrace.read(window, offset))
+        data, data_range = fctrace.read(window, offset)
 
         # Create histogram
         bins = data.max() - data.min()
@@ -224,29 +232,6 @@ def fit_levels(fctrace, window, start_values, fitfilename, offsets=None,
         # Print the time for one fit
         if timing:
             print time.time() - tstart,
-
-        # Plot the fit if requested
-        if plotting:
-            #Plot Data
-            ax = fig.add_subplot(xsubplts, ysubplts, 2 * nr - 1)
-            ax.set_title('t = ' + str(offset))
-            xdata = np.array(range(offset, offset + plotting))
-            ydata = np.array(data[:plotting])
-            ax.plot(xdata, ydata)
-            ax.set_xlabel('t (ms)')
-            ax.set_ylabel('I (nA)')
-
-            #Plot Histogram
-            ax = fig.add_subplot(xsubplts, ysubplts, 2 * nr)
-            ax.set_title('t = ' + str(offset))
-            xdata = histogram[0]
-            ydata = histogram[1][:-1]
-            ax.plot(xdata, ydata)
-            ax.plot(normal(x, *fit_values), x)
-
-    # Optimize subplot spaceing
-    if plotting:
-        fig.tight_layout()
 
     #Close fit file
     fitfile.close()
@@ -279,8 +264,9 @@ def read_fitfile(fitfile):
 
 
 def tc(sampling_rate, timestr='s'):
-    """Returns the time constant based on the sampling rate.
+    """Returns the time constant based on the sampling rate and timestr.
 
+    timestr: 'us', 'ms', 's', 'm', 'h', 'd'
     """
 
     sampling_rate = int(sampling_rate)
@@ -303,24 +289,41 @@ def tc(sampling_rate, timestr='s'):
     return float(time_constant)
 
 
+def dtr(values, bits=16, min=-10, max=10):
+
+    # Get the number of steps out of bits
+    steps = 2 ** bits - 1
+
+    # Process the data values and return numpy array
+    values = [value * (max - min) / float((steps)) + min for value in values]
+    return np.array(values)
+
+
 class Histogram(object):
 
     def __init__(self):
         self.elements = 0
         self.comment = ''
-        self.data = np.array([])
+        self._data = np.array([])
 
     def __getitem__(self, key):
-        return self.data[key]
+        return self._data[key]
 
-    def __repr__(self):
-        return self.data.__repr__()
+    @property
+    def data(self):
+        return self._data
 
+    @data.setter
+    def data(self, data):
+        self._data = data
+
+    @property
     def bins(self):
-        return self.data[0]
+        return self._data[0]
 
-    def frequencies(self):
-        return self.data[1]
+    @property
+    def freqs(self):
+        return self._data[1]
 
 
 def create_histogram(data, normed=True, comment=''):
@@ -357,9 +360,10 @@ def read_histogram(histogram_file):
 
         for line in histoobj:
 
-            line = line.replace('\n', '')
+            # Remove trailing characters and whitespaces at line end
+            line = line.rstrip()
 
-            # Detect and set section
+            # Detect the section
             try:
                 if (line[0] == '<' and line[-1] == '>'):
                     section = line[1:-1]
@@ -475,7 +479,25 @@ def fit_normal(xdata, ydata, function=True, *parameters):
             return fit
 
 
-def read_fcsignal(fcsignal_file, start_position=0, steps=-1):
+class FCSignal(object):
+
+    def __init__(self, *filenames):
+        self._filenames = filenames
+
+    def filenames(self):
+        return self._filenames
+
+    def __iter__(self):
+        pass
+
+    def read(self, start=None, stop=None, steps=None):
+        pass
+
+    def postion(self):
+        pass
+
+
+def read_fcsignal(fcsignal_file, start=0, stop=None, steps=-1):
     """Read data from fcsignal.
 
     """
@@ -497,8 +519,14 @@ def read_fcsignal(fcsignal_file, start_position=0, steps=-1):
             line = line.replace(' ', '').split(';')
             counter += int(line[1])
 
-            if counter < start_position:
+            # Check start position
+            if counter < start:
                 continue
+
+            # Check stop position
+            if stop:
+                if position > stop:
+                    break
 
             level.append(int(line[0]))
             position.append(counter)
@@ -512,6 +540,73 @@ def read_fcsignal(fcsignal_file, start_position=0, steps=-1):
     return [level, position, length, value]
 
 
+def time_distribution(fcsignal, start=0, stop=None, steps=-1, seperator=';'):
+    """Extract time distributions from the fcsignal.
+
+    """
+
+    # Define start parameters
+    start = int(start)
+    stop  = int(stop)
+    steps = int(steps)
+    position = 0
+
+    # Create level directory to store time distributions
+    times = {}
+
+    with open(fcsignal, 'r') as fcsignal_fobj:
+
+        #Cut file header
+        fcsignal_fobj.readline()
+
+        #Read Data
+        for line in fcsignal_fobj:
+
+            # Split signal line
+            line = line.rstrip()
+            line = line.replace(' ', '').split(seperator)
+
+            # Get level values
+            level  = int(line[0])
+            position += int(line[1])
+            length = int(line[1])
+
+            # Check start position
+            if position < start:
+                continue
+
+            # Check stop position
+            if stop:
+                if position > stop:
+                    break
+
+            # Get the time distribution from level dictonary or create it
+            try:
+                histo = times[level]
+            except KeyError:
+                histo = {}
+                times[level] = histo
+
+            # Update date time distribution dictonary
+            try:
+                freq = histo[length]
+                histo[length] = freq + 1
+            except KeyError:
+                histo[length] = 1
+
+            steps -= 1
+            if not steps:
+                break
+
+    #Format the dictonaries
+    for level, histo in times.items():
+        histogram = Histogram()
+        histogram.data = np.array([histo.keys(), histo.values()])
+        times[level] = histogram
+
+    return times
+
+
 def read_cummulants(cummulants_file):
     """Read the cummulants from file.
 
@@ -522,10 +617,13 @@ def read_cummulants(cummulants_file):
     with open(cummulants_file, 'r') as cummulants_fobj:
 
         for line in cummulants_fobj:
-            line = line.replace(' ', '').replace(';\n', '')
+            line = line.rstrip().rstrip(';')
             line = line.split(';')
             line = [float(cummulant) for cummulant in line]
 
             data.append(line)
 
     return np.transpose(data)
+
+
+
