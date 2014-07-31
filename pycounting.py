@@ -8,6 +8,9 @@ from scipy.optimize import curve_fit
 
 
 class BinaryData(object):
+    """Handle binary counting data files very flexible.
+
+    """
 
     def __init__(self, filelist, datatype, byte_order=None):
 
@@ -62,13 +65,6 @@ class BinaryData(object):
 
         """
         return self._filelist
-
-    @property
-    def nr_of_files(self):
-        """Return the number of added files.
-
-        """
-        return len(self._filelist)
 
     @property
     def datasize(self):
@@ -178,6 +174,117 @@ class BinaryData(object):
         stop = self.position
 
         return np.array(data), (start, stop)
+
+
+class FCSignal(object):
+    """Handel FCSignal files.
+
+    """
+
+    def __init__(self, filename, seperator=';'):
+
+        # Store the filelist
+        self._filename = filename
+        self._fileobj = open(self._filename, 'rb')
+
+        self._seperator = seperator
+
+        self._event = 0
+        self._position = 0
+
+    def _next_line(self):
+        linestr = self._fileobj.readline()
+        self._event += 1
+
+        line = linestr.replace(' ', '').split(self._seperator)
+
+        self._position += int(line[1])
+        level = int(line[0])
+        length = int(line[1])
+        value = float(line[2])
+
+        return [level, self._position, length, value]
+
+    @property
+    def event(self):
+        return self._event
+
+
+    def __getitem__(self, key):
+
+        # Go back
+        if self._event > key:
+            self._fileobj.seek(0)
+            self._event = 0
+            self._position = 0
+
+        while self._event <= key:
+            line = self._next_line()
+
+        return line
+
+
+
+    @property
+    def filelist(self):
+        """Return list of filenames.
+
+        """
+        return self._filelist
+
+    def __iter__(self):
+         for line in self._fileobj:
+             yield line
+
+    def read(self, start=0, stop=None, steps=-1):
+        """Read data from fcsignal and return numpy array.
+
+        """
+
+        level = []
+        position = []
+        length = []
+        value = []
+
+        counter = 0
+
+        for line in self.__iter__:
+
+            line = line.replace(' ', '').split(';')
+            counter += int(line[1])
+
+            # Check start position
+            if counter < start:
+                continue
+
+            # Check stop position
+            if stop:
+                if position > stop:
+                    break
+
+            # Turn the strings into values
+            level.append(int(line[0]))
+            position.append(counter)
+            length.append(int(line[1]))
+            value.append(float(line[2]))
+
+            steps -= 1
+            if not steps:
+                break
+
+        # Return everything as numpy array
+        return np.array([level, position, length, value])
+
+    @property
+    def position(self):
+        return self._position
+
+    @position.setter
+    def position(self):
+        pass
+
+    def times(self):
+        pass
 
 
 def fit_levels(fctrace, window, start_values, fitfilename, offsets=None,
@@ -479,22 +586,7 @@ def fit_normal(xdata, ydata, function=True, *parameters):
             return fit
 
 
-class FCSignal(object):
 
-    def __init__(self, *filenames):
-        self._filenames = filenames
-
-    def filenames(self):
-        return self._filenames
-
-    def __iter__(self):
-        pass
-
-    def read(self, start=None, stop=None, steps=None):
-        pass
-
-    def postion(self):
-        pass
 
 
 def read_fcsignal(fcsignal_file, start=0, stop=None, steps=-1):
@@ -528,6 +620,7 @@ def read_fcsignal(fcsignal_file, start=0, stop=None, steps=-1):
                 if position > stop:
                     break
 
+            # Turn the strings into values
             level.append(int(line[0]))
             position.append(counter)
             length.append(int(line[1]))
@@ -537,7 +630,8 @@ def read_fcsignal(fcsignal_file, start=0, stop=None, steps=-1):
             if not steps:
                 break
 
-    return [level, position, length, value]
+    # Return everything as numpy array
+    return np.array([level, position, length, value])
 
 
 def time_distribution(fcsignal, start=0, stop=None, steps=-1, seperator=';'):
@@ -547,7 +641,8 @@ def time_distribution(fcsignal, start=0, stop=None, steps=-1, seperator=';'):
 
     # Define start parameters
     start = int(start)
-    stop  = int(stop)
+    if stop:
+        stop  = int(stop)
     steps = int(steps)
     position = 0
 
