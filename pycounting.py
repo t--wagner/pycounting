@@ -7,7 +7,7 @@ import numpy as np
 from scipy.optimize import curve_fit
 
 
-class BinaryData(object):
+class FCTrace(object):
     """Handle binary counting data files very flexible.
 
     """
@@ -147,10 +147,10 @@ class BinaryData(object):
         """
 
         # Set the position if not None
-        if not position is None:
+        if position is not None:
             self.position = long(position)
 
-        start  = self.position
+        start = self.position
 
         # Creat a list to store the data
         data = []
@@ -181,110 +181,126 @@ class FCSignal(object):
 
     """
 
-    def __init__(self, filename, seperator=';'):
+    def __init__(self, filename, seperator=';', start_position=0):
 
         # Store the filelist
         self._filename = filename
         self._fileobj = open(self._filename, 'rb')
 
+        # Set seperator of fcsignal txtfile
         self._seperator = seperator
 
-        self._event = 0
-        self._position = 0
+        self._start_position = start_position
 
-    def _next_line(self):
+        # Set event and position to the start of the fcsignal
+        self._goto_start()
+
+    def _goto_start(self):
+        """Go back to start position in fcsignal.
+
+        """
+        self._fileobj.seek(0)
+        self._next_position = self._start_position
+        self._next_event = 0
+        self._level = self.next()
+
+    def __getitem__(self, key):
+        self.event = key
+        return self.level
+
+    def next(self):
+        # Read next line from fcsignal file
         linestr = self._fileobj.readline()
-        self._event += 1
 
+        if not linestr:
+            raise StopIteration
+
+        # Split the line
         line = linestr.replace(' ', '').split(self._seperator)
 
-        self._position += int(line[1])
-        level = int(line[0])
+        # Create a level from the line
+        position = self._next_position
+        state = int(line[0])
         length = int(line[1])
         value = float(line[2])
+        self._level = [position, state, length, value]
 
-        return [level, self._position, length, value]
+        # Calculate the position of next level and increment event
+        self._next_position += length
+        self._next_event += 1
+
+        # Return the level
+        return self._level
+
+    @property
+    def level(self):
+        """Return the current level.
+
+        """
+        return self._level
+
+    @property
+    def position(self):
+        """Get and set the position.
+
+        Postion will always be the next event of set position.
+        """
+        return self._level[0]
+
+    @position.setter
+    def position(self, position):
+        if position < self.position:
+            self._goto_start()
+
+        while self.position < position:
+            self.next()
 
     @property
     def event(self):
-        return self._event
-
-
-    def __getitem__(self, key):
-
-        # Go back
-        if self._event > key:
-            self._fileobj.seek(0)
-            self._event = 0
-            self._position = 0
-
-        while self._event <= key:
-            line = self._next_line()
-
-        return line
-
-
-
-    @property
-    def filelist(self):
-        """Return list of filenames.
+        """Get and set the event.
 
         """
-        return self._filelist
+        return self._next_event - 1
+
+    @event.setter
+    def event(self, event):
+        if event < self.event:
+            self._goto_start()
+
+        while self.event < event:
+            self.next()
 
     def __iter__(self):
-         for line in self._fileobj:
-             yield line
+        self._goto_start()
+        return self
 
-    def read(self, start=0, stop=None, steps=-1):
-        """Read data from fcsignal and return numpy array.
+    def range_events(self, start=0, stop=None):
+        """Return event iterator.
 
         """
 
-        level = []
-        position = []
-        length = []
-        value = []
+        self.event = start
+        yield self.level
 
-        counter = 0
+        while self._next_event < stop or stop is None:
+            yield self.next()
 
-        for line in self.__iter__:
+    def range_positions(self, start=0, stop=None):
+        """Return iterator over range.
 
-            line = line.replace(' ', '').split(';')
-            counter += int(line[1])
+        """
 
-            # Check start position
-            if counter < start:
-                continue
+        self.position = start
+        yield self.level
 
-            # Check stop position
-            if stop:
-                if position > stop:
-                    break
+        while self._next_position < stop or stop is None:
+            yield self.next()
 
-            # Turn the strings into values
-            level.append(int(line[0]))
-            position.append(counter)
-            length.append(int(line[1]))
-            value.append(float(line[2]))
+    def read_events(self, start=0, stop=None):
+        return list(self.range_events(start, stop))
 
-            steps -= 1
-            if not steps:
-                break
-
-        # Return everything as numpy array
-        return np.array([level, position, length, value])
-
-    @property
-    def position(self):
-        return self._position
-
-    @position.setter
-    def position(self):
-        pass
-
-    def times(self):
-        pass
+    def read_positions(self, start=0, stop=None):
+        return list(self.range_positions(start, stop))
 
 
 def fit_levels(fctrace, window, start_values, fitfilename, offsets=None,
@@ -302,7 +318,6 @@ def fit_levels(fctrace, window, start_values, fitfilename, offsets=None,
 
     fit_values = np.array(start_values)
     data = []
-
 
     # Cycle through the data
     for nr, offset in enumerate(offsets, 1):
@@ -340,7 +355,7 @@ def fit_levels(fctrace, window, start_values, fitfilename, offsets=None,
         if timing:
             print time.time() - tstart,
 
-    #Close fit file
+    # Close fit file
     fitfile.close()
 
 
@@ -586,9 +601,6 @@ def fit_normal(xdata, ydata, function=True, *parameters):
             return fit
 
 
-
-
-
 def read_fcsignal(fcsignal_file, start=0, stop=None, steps=-1):
     """Read data from fcsignal.
 
@@ -603,10 +615,10 @@ def read_fcsignal(fcsignal_file, start=0, stop=None, steps=-1):
 
     with open(fcsignal_file, 'r') as fcsignal_fobj:
 
-        #Cut file header
+        # Cut file header
         fcsignal_fobj.readline()
 
-        #Read Data
+        # Read Data
         for line in fcsignal_fobj:
             line = line.replace(' ', '').split(';')
             counter += int(line[1])
@@ -642,7 +654,7 @@ def time_distribution(fcsignal, start=0, stop=None, steps=-1, seperator=';'):
     # Define start parameters
     start = int(start)
     if stop:
-        stop  = int(stop)
+        stop = int(stop)
     steps = int(steps)
     position = 0
 
@@ -651,10 +663,10 @@ def time_distribution(fcsignal, start=0, stop=None, steps=-1, seperator=';'):
 
     with open(fcsignal, 'r') as fcsignal_fobj:
 
-        #Cut file header
+        # Cut file header
         fcsignal_fobj.readline()
 
-        #Read Data
+        # Read Data
         for line in fcsignal_fobj:
 
             # Split signal line
@@ -662,7 +674,7 @@ def time_distribution(fcsignal, start=0, stop=None, steps=-1, seperator=';'):
             line = line.replace(' ', '').split(seperator)
 
             # Get level values
-            level  = int(line[0])
+            level = int(line[0])
             position += int(line[1])
             length = int(line[1])
 
@@ -693,7 +705,7 @@ def time_distribution(fcsignal, start=0, stop=None, steps=-1, seperator=';'):
             if not steps:
                 break
 
-    #Format the dictonaries
+    # Format the dictonaries
     for level, histo in times.items():
         histogram = Histogram()
         histogram.data = np.array([histo.keys(), histo.values()])
@@ -719,6 +731,3 @@ def read_cummulants(cummulants_file):
             data.append(line)
 
     return np.transpose(data)
-
-
-
