@@ -52,12 +52,34 @@ class FCTrace(object):
             position += os.path.getsize(filename) / self._datapointsize
             self._file_stop_positions.append(position)
 
+        self._datapoint = 0
+
     def __del__(self):
         """Close all datafiles.
 
         """
         for fileobj in self._fileobjs:
             fileobj.close()
+
+    def __len__(self):
+        return self.points
+
+    def __getitem__(self, key):
+        self.position = key
+        return self.next()
+
+    def __iter__(self):
+        self.position = 0
+        return self
+
+    def next(self):
+        """Get the next datpoint of fctrace.
+
+        """
+        datastring = self._fileobj.read(self._datapointsize)
+        self._datapoint, = struct.unpack(self._struct_format, datastring)
+
+        return self._datapoint
 
     @property
     def filelist(self):
@@ -139,6 +161,24 @@ class FCTrace(object):
         file_position = datapoint_nr * self._datapointsize
         self._fileobj.seek(file_position, 0)
 
+    def range(self, start, stop):
+        """Return interator over start to stop.
+
+        """
+
+        # Set the position if not None
+        self.position = int(start)
+
+        while self.position < int(stop):
+            yield self.next()
+
+    def array(self):
+        """Return numpy array between start and stop.
+
+        This method is very fast by using the numpy function fromfile.
+        """
+        pass
+
     def read(self, points=-1, position=None):
         """Read number of points after position and return them as a list.
 
@@ -173,7 +213,7 @@ class FCTrace(object):
 
         stop = self.position
 
-        return np.array(data), (start, stop)
+        return (start, stop), data
 
 
 class FCSignal(object):
@@ -181,7 +221,7 @@ class FCSignal(object):
 
     """
 
-    def __init__(self, filename, seperator=';', start_position=0):
+    def __init__(self, filename, seperator=';'):
 
         # Store the filelist
         self._filename = filename
@@ -189,8 +229,6 @@ class FCSignal(object):
 
         # Set seperator of fcsignal txtfile
         self._seperator = seperator
-
-        self._start_position = start_position
 
         # Set event and position to the start of the fcsignal
         self._goto_start()
@@ -200,13 +238,12 @@ class FCSignal(object):
 
         """
         self._fileobj.seek(0)
-        self._next_position = self._start_position
+        self._next_position = 0
         self._next_event = 0
-        self._level = self.next()
 
     def __getitem__(self, key):
-        self.event = key
-        return self.level
+        self.event_nr = key
+        return self.next()
 
     def next(self):
         # Read next line from fcsignal file
@@ -223,21 +260,14 @@ class FCSignal(object):
         state = int(line[0])
         length = int(line[1])
         value = float(line[2])
-        self._level = [position, state, length, value]
+        level = [position, state, length, value]
 
         # Calculate the position of next level and increment event
         self._next_position += length
         self._next_event += 1
 
         # Return the level
-        return self._level
-
-    @property
-    def level(self):
-        """Return the current level.
-
-        """
-        return self._level
+        return level
 
     @property
     def position(self):
@@ -245,7 +275,7 @@ class FCSignal(object):
 
         Postion will always be the next event of set position.
         """
-        return self._level[0]
+        return self._next_position
 
     @position.setter
     def position(self, position):
@@ -256,51 +286,49 @@ class FCSignal(object):
             self.next()
 
     @property
-    def event(self):
+    def event_nr(self):
         """Get and set the event.
 
         """
-        return self._next_event - 1
+        return self._next_event
 
-    @event.setter
-    def event(self, event):
-        if event < self.event:
+    @event_nr.setter
+    def event_nr(self, nr):
+        if nr < self.event_nr:
             self._goto_start()
 
-        while self.event < event:
+        while self.event_nr < nr:
             self.next()
 
     def __iter__(self):
         self._goto_start()
         return self
 
-    def range_events(self, start=0, stop=None):
+    def events(self, start=0, stop=None):
         """Return event iterator.
 
         """
 
-        self.event = start
-        yield self.level
+        self.event_nr = start
 
         while self._next_event < stop or stop is None:
             yield self.next()
 
-    def range_positions(self, start=0, stop=None):
+    def range(self, start=0, stop=None):
         """Return iterator over range.
 
         """
 
         self.position = start
-        yield self.level
 
         while self._next_position < stop or stop is None:
             yield self.next()
 
     def read_events(self, start=0, stop=None):
-        return list(self.range_events(start, stop))
+        return list(self.events(start, stop))
 
-    def read_positions(self, start=0, stop=None):
-        return list(self.range_positions(start, stop))
+    def read_range(self, start=0, stop=None):
+        return list(self.range(start, stop))
 
 
 def fit_levels(fctrace, window, start_values, fitfilename, offsets=None,
