@@ -162,7 +162,7 @@ class FCTrace(object):
         self._fileobj.seek(file_position, 0)
 
     def range(self, start, stop):
-        """Return interator over start to stop.
+        """Return interator over range (start, stop].
 
         """
 
@@ -214,6 +214,42 @@ class FCTrace(object):
         stop = self.position
 
         return (start, stop), data
+
+
+class FCDetector(object):
+
+    def __init__(self):
+        pass
+
+    def process(self):
+        pass
+
+
+class Histogram(object):
+
+    def __init__(self):
+        self.elements = 0
+        self.comment = ''
+        self._data = np.array([])
+
+    def __getitem__(self, key):
+        return self._data[key]
+
+    @property
+    def data(self):
+        return self._data
+
+    @data.setter
+    def data(self, data):
+        self._data = data
+
+    @property
+    def bins(self):
+        return self._data[0]
+
+    @property
+    def freqs(self):
+        return self._data[1]
 
 
 class FCSignal(object):
@@ -269,6 +305,26 @@ class FCSignal(object):
         # Return the level
         return level
 
+    def next_events(self, nr_of_events):
+        """Return number of events in length.
+
+        """
+        start = self.event_nr
+        stop = start + nr_of_events
+
+        for event in self.events(start, stop):
+            yield event
+
+    def next_range(self, length):
+        """Return number of events in length.
+
+        """
+        start = self.position
+        stop = start + length
+
+        for event in self.range(start, stop):
+            yield event
+
     @property
     def position(self):
         """Get and set the position.
@@ -315,7 +371,7 @@ class FCSignal(object):
             yield self.next()
 
     def range(self, start=0, stop=None):
-        """Return iterator over range.
+        """Return interator over range (start, stop].
 
         """
 
@@ -329,6 +385,82 @@ class FCSignal(object):
 
     def read_range(self, start=0, stop=None):
         return list(self.range(start, stop))
+
+
+class Histogram2(object):
+
+    def __init__(self):
+        self.comment = ''
+        self._elements = 0
+        self._histo = {}
+
+    def __getitem__(self, bin):
+        return self._histo[bin]
+
+    @property
+    def elements(self):
+        """Return number of elements in histogram.
+
+        """
+        return self._elements
+
+    def add(self, bin, freq):
+        """Add freq to bin.
+
+        """
+        try:
+            self._histo[bin] += freq
+        except KeyError:
+            self._histo[bin] = freq
+        self._elements += freq
+
+    @property
+    def bins(self):
+        bins = np.array(self._histo.keys())
+        return bins
+
+    @property
+    def freqs(self):
+        """Return frequencies.
+
+        """
+
+        freqs = np.array(self._histo.values())
+        return freqs
+
+    @property
+    def freqs_n(self):
+        """Return normed frequencies.
+
+        """
+
+        return self.freqs / float(self.elements)
+
+
+class FCTimes(object):
+
+    def __init__(self):
+        self._times = {}
+
+    def __getitem__(self, key):
+        return self._times[key]
+
+    def add(self, fcsignal):
+
+        # Iterate over all signals
+        for signal in fcsignal:
+
+            level = signal[1]
+            length = signal[2]
+
+            try:
+                histo = self._times[level]
+            except KeyError:
+                histo = Histogram2()
+                self._times[level] = histo
+
+            # Update date time distribution dictonary
+            histo.add(length, 1)
 
 
 def fit_levels(fctrace, window, start_values, fitfilename, offsets=None,
@@ -447,33 +579,6 @@ def dtr(values, bits=16, min=-10, max=10):
     # Process the data values and return numpy array
     values = [value * (max - min) / float((steps)) + min for value in values]
     return np.array(values)
-
-
-class Histogram(object):
-
-    def __init__(self):
-        self.elements = 0
-        self.comment = ''
-        self._data = np.array([])
-
-    def __getitem__(self, key):
-        return self._data[key]
-
-    @property
-    def data(self):
-        return self._data
-
-    @data.setter
-    def data(self, data):
-        self._data = data
-
-    @property
-    def bins(self):
-        return self._data[0]
-
-    @property
-    def freqs(self):
-        return self._data[1]
 
 
 def create_histogram(data, normed=True, comment=''):
@@ -627,119 +732,6 @@ def fit_normal(xdata, ydata, function=True, *parameters):
             return normal(xdata, *fit[0])
         else:
             return fit
-
-
-def read_fcsignal(fcsignal_file, start=0, stop=None, steps=-1):
-    """Read data from fcsignal.
-
-    """
-
-    level = []
-    position = []
-    length = []
-    value = []
-
-    counter = 0
-
-    with open(fcsignal_file, 'r') as fcsignal_fobj:
-
-        # Cut file header
-        fcsignal_fobj.readline()
-
-        # Read Data
-        for line in fcsignal_fobj:
-            line = line.replace(' ', '').split(';')
-            counter += int(line[1])
-
-            # Check start position
-            if counter < start:
-                continue
-
-            # Check stop position
-            if stop:
-                if position > stop:
-                    break
-
-            # Turn the strings into values
-            level.append(int(line[0]))
-            position.append(counter)
-            length.append(int(line[1]))
-            value.append(float(line[2]))
-
-            steps -= 1
-            if not steps:
-                break
-
-    # Return everything as numpy array
-    return np.array([level, position, length, value])
-
-
-def time_distribution(fcsignal, start=0, stop=None, steps=-1, seperator=';'):
-    """Extract time distributions from the fcsignal.
-
-    """
-
-    # Define start parameters
-    start = int(start)
-    if stop:
-        stop = int(stop)
-    steps = int(steps)
-    position = 0
-
-    # Create level directory to store time distributions
-    times = {}
-
-    with open(fcsignal, 'r') as fcsignal_fobj:
-
-        # Cut file header
-        fcsignal_fobj.readline()
-
-        # Read Data
-        for line in fcsignal_fobj:
-
-            # Split signal line
-            line = line.rstrip()
-            line = line.replace(' ', '').split(seperator)
-
-            # Get level values
-            level = int(line[0])
-            position += int(line[1])
-            length = int(line[1])
-
-            # Check start position
-            if position < start:
-                continue
-
-            # Check stop position
-            if stop:
-                if position > stop:
-                    break
-
-            # Get the time distribution from level dictonary or create it
-            try:
-                histo = times[level]
-            except KeyError:
-                histo = {}
-                times[level] = histo
-
-            # Update date time distribution dictonary
-            try:
-                freq = histo[length]
-                histo[length] = freq + 1
-            except KeyError:
-                histo[length] = 1
-
-            steps -= 1
-            if not steps:
-                break
-
-    # Format the dictonaries
-    for level, histo in times.items():
-        histogram = Histogram()
-        histogram.data = np.array([histo.keys(), histo.values()])
-        times[level] = histogram
-
-    return times
 
 
 def read_cummulants(cummulants_file):
