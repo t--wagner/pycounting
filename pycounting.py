@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
 
 import os
-import struct
 import time
 import numpy as np
+import pandas as pd
+from collections import defaultdict
 from scipy.optimize import curve_fit
 
 
@@ -12,7 +13,7 @@ class Trace(object):
 
     """
 
-    def __init__(self, filelist, datatype, byte_order=None):
+    def __init__(self, filelist, datatype):
 
         # Store the filelist
         self._filelist = filelist
@@ -25,22 +26,17 @@ class Trace(object):
         # Set position to first file
         self._fileobj = self._fileobjs[0]
 
-        # Store the struct information
-        if datatype in ['int', 'int32']:
-            self._struct_format = 'i'
-            self._array_format = np.int32
-        elif datatype == 'ushort':
-            self._struct_format = 'H'
-            self._array_format = ''
+        # Store the datatype information
+        self._datatype = datatype
+
+        if self._datatype in ['int', 'int32']:
+            self._dtype = np.dtype(np.int32)
+        elif self._datatype == 'ushort':
+            self._dtype = ''
         else:
             raise TypeError('Unsupported datatype')
 
-        self._datatype = datatype
-
-        if byte_order:
-            self._struct_format = byte_order + self._struct_format
-
-        self._datapointsize = struct.calcsize(self._struct_format)
+        self._datapointsize = self._dtype.itemsize
 
         # Calculate the size in bytes of all files
         self._datasize = 0
@@ -76,20 +72,6 @@ class Trace(object):
         self.position = 0
         return self
 
-    def next(self):
-        """Get the next datpoint of trace.
-
-        """
-        try:
-            datastring = self._fileobj.read(self._datapointsize)
-            self._datapoint, = struct.unpack(self._struct_format, datastring)
-        except:
-            self.position = self.position
-            datastring = self._fileobj.read(self._datapointsize)
-            self._datapoint, = struct.unpack(self._struct_format, datastring)
-
-        return self._datapoint
-
     @property
     def filelist(self):
         """Return list of filenames.
@@ -110,13 +92,6 @@ class Trace(object):
 
         """
         return self._datatype
-
-    @property
-    def datapointsize(self):
-        """Return the size of one datapoint in kBytes.
-
-        """
-        return self._datapointsize
 
     @property
     def points(self):
@@ -140,19 +115,25 @@ class Trace(object):
 
         return file_start_position + file_current_position
 
+    def _get_position(self, position):
+
+        if position < 0:
+            position += self._file_stop_positions[-1]
+
+        # Raise IndexError if out of range
+        if ((position < 0) or (position > self._file_stop_positions[-1])):
+            raise IndexError('position out of range')
+
+        return position
+
     @position.setter
     def position(self, position):
         """Set the current datapoint position.
 
         """
 
-        # If negative position calculate the corresponding positive position
-        if position < 0:
-            position += self._file_stop_positions[-1]
-
-            # Raise IndexError if out of range
-            if position < 0:
-                raise IndexError('position out of range')
+        # Make sure the position is valid positive number
+        position = self._get_position(position)
 
         # Check if position is valid otherwise raise IndexError
         if ((position < 0) or (position > self._file_stop_positions[-1])):
@@ -170,64 +151,58 @@ class Trace(object):
         file_position = datapoint_nr * self._datapointsize
         self._fileobj.seek(file_position, 0)
 
-    def range(self, start, stop):
-        """Return interator over range (start, stop].
+    def next(self):
+        """Return next datapoint of trace.
 
         """
 
-        # Set the position if not None
-        self.position = int(start)
+        datapoint, = self.next_window(1)
+        return datapoint
 
-        while self.position < int(stop):
-            yield self.next()
-
-    def next_range(self, length):
-        """Return interator ofer the next length values.
+    def next_window(self, length):
+        """Return np.array with next datapoints of trace.
 
         """
-        start = self.position
-        stop = start + length
 
-        for datapoint in self.range(start, stop):
-            yield datapoint
+        # Every other data method uses this next_window method
 
-    def read_range(self, start, stop):
-        """Return list of datapoints in range (start, stop].
-
-        """
-        return list(self.range(start, stop))
-
-    def next_array(self, length):
-
-        # Get the array
+        # Get the array of length
         length = int(length)
-        data = np.fromfile(self._fileobj, np.int32, length)
+        data = np.fromfile(self._fileobj, self._dtype, length)
 
-        # Check array size
+        # Check array size to find end of file
         rest = length - data.size
         if rest:
+            # Update position for next file
             self.position = self.position
-            data = np.append(data, np.fromfile(self._fileobj, np.int32, rest))
+            data = np.append(data,
+                             np.fromfile(self._fileobj, self._dtype, rest))
 
         return data
 
-    def read_array(self, start, stop):
+    def range(self, start, stop):
         """Return numpy array between start and stop.
 
-        This method is very fast by using the numpy build in fromfile().
         """
+        # Handle negative positions
+        stop = self._get_position(stop)
+
         self.position = int(start)
         length = stop - start
-        return self.next_array(length)
+        return self.next_window(length)
 
+    def windows(self, length, start=None, stop=None, offset=None):
 
-class FCDetector(object):
+        if start is not None:
+            start = self._get_position(start)
+            self.position = int(start)
+        if stop is None:
+            stop = self._file_stop_positions[-1]
 
-    def __init__(self):
-        self._buffer = None
+        stop = self._get_position(stop)
 
-    def process(self):
-        pass
+        while self.position + length < stop:
+            yield self.next_window(length)
 
 
 class Signal(object):
@@ -371,10 +346,54 @@ class Signal(object):
 
 class Histogram(object):
 
-    def __init__(self):
+    def __init__(self, data, bins=1000, range=None):
+        self._freqs, self._bins = np.histogram(data, bins, range)
+
+    def add(self, data):
+        """Add data to the histogram.
+
+        """
+        self._freqs += np.histogram(data, self._bins)[0]
+
+    @property
+    def elements(self):
+        """Return number of elements in histogram.
+
+        """
+        return self._freqs.sum()
+
+    @property
+    def bins(self):
+        """Return bin values.
+
+        """
+        # Filter off empty frequency bins (necassary for fitting and plotting)
+        return self._bins[:-1][self._freqs > 0]
+
+    @property
+    def freqs(self):
+        """Return frequencies.
+
+        """
+        # Filter off empty frequency bins (necassary for fitting and plotting)
+        return self._freqs[self._freqs > 0]
+
+    @property
+    def freqs_n(self):
+        """Return normed frequencies.
+
+        """
+        return self.freqs / float(self.elements)
+
+
+class PyHistogram(object):
+
+    def __init__(self, datapoints=[]):
         self.comment = ''
         self._elements = 0
-        self._histo = {}
+        self._histo = defaultdict(int)
+
+        self.add(datapoints)
 
     def __getitem__(self, bin):
         return self._histo[bin]
@@ -386,15 +405,23 @@ class Histogram(object):
         """
         return self._elements
 
-    def add(self, bin, freq):
+    def add_datapoint(self, bin, freq=1):
         """Add freq to bin.
 
         """
-        try:
-            self._histo[bin] += freq
-        except KeyError:
-            self._histo[bin] = freq
+        self._histo[bin] += freq
         self._elements += freq
+
+    def add(self, datapoints):
+
+        # Try to iterate over data
+        try:
+            for datapoint in datapoints:
+                self._histo[datapoint] += 1
+                self._elements += 1
+        # If not iteratable just insert
+        except TypeError:
+            self.add_datapoint(datapoints)
 
     @property
     def bins(self):
@@ -406,7 +433,6 @@ class Histogram(object):
         """Return frequencies.
 
         """
-
         freqs = np.array(self._histo.values())
         return freqs
 
@@ -415,35 +441,7 @@ class Histogram(object):
         """Return normed frequencies.
 
         """
-
         return self.freqs / float(self.elements)
-
-
-class Histogram2(object):
-
-    def __init__(self):
-        self.elements = 0
-        self.comment = ''
-        self._data = np.array([])
-
-    def __getitem__(self, key):
-        return self._data[key]
-
-    @property
-    def data(self):
-        return self._data
-
-    @data.setter
-    def data(self, data):
-        self._data = data
-
-    @property
-    def bins(self):
-        return self._data[0]
-
-    @property
-    def freqs(self):
-        return self._data[1]
 
 
 class Times(object):
@@ -457,168 +455,124 @@ class Times(object):
     def add(self, fcsignal):
 
         # Iterate over all signals
-        for signal in fcsignal:
+        for level in fcsignal:
 
-            level = signal[1]
-            length = signal[2]
+            state = level[0]
+            length = level[1]
 
             try:
-                histo = self._times[level]
+                histo = self._times[state]
             except KeyError:
                 histo = Histogram()
-                self._times[level] = histo
+                self._times[state] = histo
 
             # Update date time distribution dictonary
-            histo.add(length, 1)
+            histo.add_datapoint(length, 1)
 
 
-def linear(xdata, slope=1, yintercept=0):
+class FitFunction(object):
 
-    # Make numpy array out of data
-    xdata = np.array(xdata)
+    def __init__(self, function, xdata, ydata, start_parameters):
+        self._function = function
+        self._parameters, self._error = curve_fit(function, xdata, ydata,
+                                                  start_parameters)
 
-    return slope * xdata + yintercept
+    def __call__(self, values):
+        return self._function(values, *self._parameters)
 
+    @property
+    def function(self):
+        return self._function
 
-def fit_linear(xdata, ydata, slope=1, yintercept=0, function=True):
+    @property
+    def parameters(self):
+        return self._parameters
 
-    ydata = np.array(ydata)
-    start_paras = np.array([slope, yintercept])
-
-    fit = curve_fit(linear, xdata, ydata, start_paras)
-
-    if function:
-        return linear(xdata, *fit[0])
-    else:
-        return fit
-
-
-def exp(xdata, a=1, tau=1):
-
-    # Make numpy array out of data
-    xdata = np.array(xdata)
-
-    return a * np.exp(tau * xdata)
+    @property
+    def error(self):
+        return self._error
 
 
-def fit_exp(xdata, ydata, a=1, tau=1, function=True):
+def flinear(x, m=1, y0=0):
+    """Linear function.
 
-    xdata = np.array(xdata)
-    ydata = np.array(ydata)
-    start_paras = np.array([a, tau])
-
-    fit = curve_fit(exp, xdata, ydata, start_paras)
-
-    if function:
-        return exp(xdata, *fit[0])
-    else:
-        return fit
+    """
+    x = np.array(x, copy=False)
+    return m * x + y0
 
 
-def normal(x, *parameters):
-    """Create a gauss sum function from on the parameter list.
+def fit_linear(xdata, ydata, m=1, y0=0):
+    """Fit data with linear function.
 
+    """
+    return FitFunction(flinear, xdata, ydata, (m, y0))
+
+
+def fexp(x, a=1, tau=1):
+    """Exponential function.
+    """
+    x = np.array(x, copy=False)
+    return a * np.exp(tau * x)
+
+
+def fit_exp(xdata, ydata, a=1, tau=1):
+    """Fit data with exponential function.
+
+    """
+    return FitFunction(fexp, xdata, ydata, (a, tau))
+
+
+def fnormal(x, a=1, mu=0, sigma=1):
+    """Normal distribution.
+
+    """
+    x = np.array(x, copy=False)
+    return a * np.exp(-(x - mu)**2 / (2. * sigma**2))
+
+
+def fit_normal(xdata, ydata, a=1, mu=0, sigma=1):
+    """Fit data with a normal distribution.
+
+    """
+    return FitFunction(fnormal, xdata, ydata, (a, mu, sigma))
+
+
+def flevels(x, *parameters):
+    """Sum function of N differnt normal distributions.
+
+    parameters: (sigma_0, mu_0, A_0, .... sigma_N, mu_N, A_N)
     """
 
     # Define gauss function
-    def normal(x, sigma, mu, A):
-        x = np.array(x)
-        return A * np.exp(-(x - mu)**2 / (2. * sigma**2))
-
-    x = np.array(x)
+    x = np.array(x, copy=False)
     res = np.zeros(x.size)
 
-    pars_list = [parameters[i:i+3] for i in range(0, len(parameters), 3)]
+    pars_list = (parameters[i:i+3] for i in range(0, len(parameters), 3))
 
     for pars in pars_list:
-        res += normal(x, *pars)
+        res += fnormal(x, *pars)
 
     return res
 
 
-def fit_normal(xdata, ydata, function=True, *parameters):
+def fit_levels(data, start_parameters):
+    """Create histogram from data and fit with a normal function.
 
-        # Make numpy arrays out of data
-        xdata = np.array(xdata)
-        ydata = np.array(ydata)
-
-        start_paras = np.array(parameters)
-
-        fit = curve_fit(normal, xdata, ydata, start_paras)
-
-        if function:
-            return normal(xdata, *fit[0])
-        else:
-            return fit
+    start_parameters: (sigma_0, mu_0, A_0, .... sigma_N, mu_N, A_N)
+    """
+    histo = Histogram(data)
+    return FitFunction(flevels, histo.bins, histo.freqs_n, start_parameters)
 
 
-def fit_levels(data, start_values):
+def fit_trace(windows, start_parameters):
+    paras = []
 
-    histo = np.histogram(data)
-    return histo
+    for window in windows:
+        fit_parameters = fit_levels(window, start_parameters)
+        paras.append(fit_parameters)
+        start_parameters = fit_parameters
 
-
-def fit_trace(trace, window, start_values):
-
-    data = trace.read_array(window)
-    fit = fit_levels(data, start_values)
-    return fit
-
-
-def fit_levels2(fctrace, window, start_values, fitfilename, offsets=None,
-                printing=True, timing=False, exceptions=True):
-
-    # Create offsets from window length and fctrace
-    if not offsets:
-        offsets = range(0, fctrace.points, window)
-
-    nr_of_offsets = len(offsets)
-    window = int(window)
-
-    # --- Fitting --- #
-    fitfile = open(fitfilename, 'w')
-
-    fit_values = np.array(start_values)
-    data = []
-
-    # Cycle through the data
-    for nr, offset in enumerate(offsets, 1):
-
-        # Starting time
-        tstart = time.time()
-
-        # Read data in window
-        data, data_range = fctrace.read(window, offset)
-
-        # Create histogram
-        bins = data.max() - data.min()
-        histogram = np.histogram(data, bins, normed=True)
-
-        # Perform the fit
-        x = histogram[1][:-1]
-        y = histogram[0]
-
-        try:
-            fit_values, b = curve_fit(normal, x, y, fit_values)
-        except RuntimeError:
-            if exceptions:
-                raise RuntimeError
-
-        # Save the fit paras
-        para_str = str(offset) + ', ' + str(fit_values.tolist())[1:-1]
-        fitfile.write(para_str + '\n')
-        fitfile.flush()
-
-        # Print the number of remaing fits
-        if printing:
-            print nr_of_offsets - nr,
-
-        # Print the time for one fit
-        if timing:
-            print time.time() - tstart,
-
-    # Close fit file
-    fitfile.close()
+    return paras
 
 
 def read_fitfile(fitfile):
@@ -689,7 +643,7 @@ def create_histogram(data, normed=True, comment=''):
     """
 
     # Create histogram instance
-    histogram = Histogram2()
+    histogram = PyHistogram()
 
     # Make numpy array out of data
     data = np.array(data)
@@ -727,7 +681,7 @@ def read_histogram(histogram_file):
 
                     # Read section data
                     if section == 'fchistogram':
-                        histograms.append(Histogram2())
+                        histograms.append(PyHistogram())
                         del bins[:]
                         del items[:]
                     elif section == '/fchistogram':
@@ -753,9 +707,6 @@ def read_histogram(histogram_file):
                 items.append(int(line[1]))
 
     return histograms
-
-
-
 
 
 def read_cummulants(cummulants_file):
