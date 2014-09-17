@@ -1,9 +1,7 @@
 # -*- coding: utf-8 -*-
 
 import os
-import time
 import numpy as np
-import pandas as pd
 from collections import defaultdict
 from scipy.optimize import curve_fit
 
@@ -385,6 +383,14 @@ class Histogram(object):
         """
         return self.freqs / float(self.elements)
 
+    @property
+    def values(self):
+        return self.bins, self.freqs
+
+    @property
+    def values_n(self):
+        return self.bins, self.freqs_n
+
 
 class PyHistogram(object):
 
@@ -470,15 +476,19 @@ class Times(object):
             histo.add_datapoint(length, 1)
 
 
-class FitFunction(object):
+class Fit(object):
 
     def __init__(self, function, xdata, ydata, start_parameters):
         self._function = function
         self._parameters, self._error = curve_fit(function, xdata, ydata,
                                                   start_parameters)
 
-    def __call__(self, values):
-        return self._function(values, *self._parameters)
+    def __call__(self, x):
+        return self._function(x, *self._parameters)
+
+    def values(self, x):
+        y = self._function(x, *self._parameters)
+        return x, y
 
     @property
     def function(self):
@@ -505,7 +515,7 @@ def fit_linear(xdata, ydata, m=1, y0=0):
     """Fit data with linear function.
 
     """
-    return FitFunction(flinear, xdata, ydata, (m, y0))
+    return Fit(flinear, xdata, ydata, (m, y0))
 
 
 def fexp(x, a=1, tau=1):
@@ -519,7 +529,7 @@ def fit_exp(xdata, ydata, a=1, tau=1):
     """Fit data with exponential function.
 
     """
-    return FitFunction(fexp, xdata, ydata, (a, tau))
+    return Fit(fexp, xdata, ydata, (a, tau))
 
 
 def fnormal(x, a=1, mu=0, sigma=1):
@@ -534,45 +544,44 @@ def fit_normal(xdata, ydata, a=1, mu=0, sigma=1):
     """Fit data with a normal distribution.
 
     """
-    return FitFunction(fnormal, xdata, ydata, (a, mu, sigma))
+    return Fit(fnormal, xdata, ydata, (a, mu, sigma))
 
 
 def flevels(x, *parameters):
     """Sum function of N differnt normal distributions.
 
-    parameters: (sigma_0, mu_0, A_0, .... sigma_N, mu_N, A_N)
+    parameters: (a_0, mu_0 sigma_0, .... a_N, mu_N, sigma_N)
     """
-
-    # Define gauss function
     x = np.array(x, copy=False)
-    res = np.zeros(x.size)
 
-    pars_list = (parameters[i:i+3] for i in range(0, len(parameters), 3))
+    # Create parameter triples (a_0, mu_0 sigma_0) ,... ,(a_N, mu_N, aigma_N)
+    triples = (parameters[i:i+3] for i in range(0, len(parameters), 3))
 
-    for pars in pars_list:
-        res += fnormal(x, *pars)
+    # (fnormal(x, a_0, mu_0 sigma_0) + ... + fnormal(x, a_0, mu_0 sigma_0)
+    summands = (fnormal(x, *triple) for triple in triples)
 
-    return res
+    return np.sum(summands, 0)
 
 
 def fit_levels(data, start_parameters):
     """Create histogram from data and fit with a normal function.
 
-    start_parameters: (sigma_0, mu_0, A_0, .... sigma_N, mu_N, A_N)
+    start_parameters: (a_0, mu_0 sigma_0, .... a_N, mu_N, sigma_N)
     """
     histo = Histogram(data)
-    return FitFunction(flevels, histo.bins, histo.freqs_n, start_parameters)
+    fit = Fit(flevels, histo.bins, histo.freqs_n, start_parameters)
+    return fit, histo
 
 
 def fit_trace(windows, start_parameters):
-    paras = []
+    fit_parameters = []
 
     for window in windows:
-        fit_parameters = fit_levels(window, start_parameters)
-        paras.append(fit_parameters)
-        start_parameters = fit_parameters
+        fit, histogram = fit_levels(window, start_parameters)
+        fit_parameters.append(fit.parameters)
+        start_parameters = fit.parameters
 
-    return paras
+    return fit_parameters
 
 
 def read_fitfile(fitfile):
