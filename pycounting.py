@@ -60,40 +60,52 @@ class Trace(object):
             fileobj.close()
 
     def __len__(self):
+        """The number of datapoints.
+
+        """
         return self.points
 
     def __getitem__(self, key):
-        self.position = key
-        return self.next()
+        if isinstance(key, slice):
+            return self.range(*key.indices(len(self)))
+        elif isinstance(key, int):
+            self.position = key
+            return self.next()
+        else:
+            raise TypeError('Trace indices must be integers, not ' +
+                            type(key).__name__)
 
     def __iter__(self):
+        """Iterator over all trace.
+
+        """
         self.position = 0
         return self
 
     @property
     def filelist(self):
-        """Return list of filenames.
+        """List of filenames.
 
         """
         return self._filelist
 
     @property
     def datasize(self):
-        """Return the size of all files in kBytes.
+        """The size of all files in kBytes.
 
         """
         return self._datasize
 
     @property
     def datatype(self):
-        """Return the datatype.
+        """The datatype.
 
         """
         return self._datatype
 
     @property
     def points(self):
-        """Return the number of datapoints in all files.
+        """The number of datapoints.
 
         """
         return self._file_stop_positions[-1]
@@ -178,7 +190,7 @@ class Trace(object):
 
         return data
 
-    def range(self, start, stop):
+    def range(self, start, stop, step=None):
         """Return numpy array between start and stop.
 
         """
@@ -187,7 +199,7 @@ class Trace(object):
 
         self.position = int(start)
         length = stop - start
-        return self.next_window(length)
+        return self.next_window(length)[::step]
 
     def windows(self, length, start=None, stop=None, offset=None):
 
@@ -203,7 +215,30 @@ class Trace(object):
             yield self.next_window(length)
 
 
-class Signal(object):
+class Detector(object):
+
+    def __init__(self, levels, average=1):
+        self.buffer = None
+        self.average = average
+        self.levels = levels
+
+    def digitize(self, data, signal, levels=None):
+
+        if levels is not None:
+            self._levels = levels
+
+        # Put buffer infront of input data
+        try:
+            data = np.concatenate([self.buffer, data])
+        except ValueError:
+            pass
+
+        self.buffer = digitize(data, signal, int(self.average),  *self.levels)
+
+        return levels
+
+
+class SignalFile(object):
     """Handel FCSignal files.
 
     """
@@ -385,10 +420,12 @@ class Histogram(object):
 
     @property
     def values(self):
+        """Return pair of bins and frequencies."""
         return self.bins, self.freqs
 
     @property
     def values_n(self):
+        """Return pair of bins and normed frequencies."""
         return self.bins, self.freqs_n
 
 
@@ -458,10 +495,10 @@ class Times(object):
     def __getitem__(self, key):
         return self._times[key]
 
-    def add(self, fcsignal):
+    def add(self, signal):
 
         # Iterate over all signals
-        for level in fcsignal:
+        for level in signal:
 
             state = level[0]
             length = level[1]
@@ -568,18 +605,32 @@ def fit_levels(data, start_parameters):
 
     start_parameters: (a_0, mu_0 sigma_0, .... a_N, mu_N, sigma_N)
     """
+
+    # Create histogram and filter everything
     histo = Histogram(data)
     fit = Fit(flevels, histo.bins, histo.freqs_n, start_parameters)
-    return fit, histo
+
+    # Filter levels=(mu_0, sigma_0, ..., mu_N, sigma_N)
+    index = np.array([False, True, True] * (len(fit.parameters) / 3))
+    levels = fit.parameters[index]
+
+    return levels, fit, histo
 
 
-def fit_trace(windows, start_parameters):
+def fit_trace(windows, start_parameters, fitfile=None):
     fit_parameters = []
 
     for window in windows:
-        fit, histogram = fit_levels(window, start_parameters)
-        fit_parameters.append(fit.parameters)
+        levels, fit, histogram = fit_levels(window, start_parameters)
+        fit_parameters.append(tuple(fit.parameters))
         start_parameters = fit.parameters
+
+    # Write data to fitfile
+    if fitfile:
+        try:
+            fobj = open(fitfile)
+        except TypeError:
+            pass
 
     return fit_parameters
 

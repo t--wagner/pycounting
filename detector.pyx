@@ -2,27 +2,43 @@
 import numpy as np
 cimport numpy as np
 
-def detect(np.ndarray[np.int, ndim=1] trace,
-           double limit0_down, double limit0_up,
-           double limit1_down, double limit1_up,
-           signal):
+
+# Declare fused type to use are generic datatype
+ctypedef fused datatype:
+    short
+    int
+    long
+    float
+    double
+
+
+# Take 1d numpy arrays
+def digitize(np.ndarray[datatype, ndim=1] trace,
+             signal,
+             int average,
+             double center_0, double width_0,
+             double center_1, double width_1):
+
+    #Calculate levels
+    cdef double limit0_down = center_0 - width_0
+    cdef double limit0_up = center_0 + width_0
+    cdef double limit1_down = center_1 - width_1
+    cdef double limit1_up = center_1 + width_1
 
     # Datapoint variables
-    cdef long datapoint
-    cdef int  datapoint_state
+    cdef datatype datapoint
+    cdef int datapoint_state
 
     # Level variables
     cdef int  level_state
     cdef long level_length
-    cdef long level_value
+    cdef datatype level_value
 
-    level_state  = signal[-1][0]
-    level_length = signal[-1][1]
-    level_value  = signal[-1][2]
+    level_state, level_length, level_value = signal[-1]
 
-    # Iterate through array by c stlye indexing
+    # Iterate through array by c stlye indexing. Keep always enough points for averraging.
     cdef unsigned long i
-    for i in range(trace.shape[0]):
+    for i in range(trace.shape[0] - average):
 
         # Get the next datapoint and increase level length
         datapoint = trace[i]
@@ -51,3 +67,6 @@ def detect(np.ndarray[np.int, ndim=1] trace,
             level_state  = datapoint_state
             level_length = 0
             level_value  = datapoint
+
+    # Return the buffer that is necassary to buffer
+    return trace[-average:].copy()
