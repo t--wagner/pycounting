@@ -201,41 +201,74 @@ class Trace(object):
         length = stop - start
         return self.next_window(length)[::step]
 
-    def windows(self, length, start=None, stop=None, offset=None):
+    def windows(self, length, start=0, stop=None, nr=None):
 
         if start is not None:
             start = self._get_position(start)
             self.position = int(start)
+
         if stop is None:
             stop = self._file_stop_positions[-1]
-
         stop = self._get_position(stop)
 
-        while self.position + length < stop:
-            yield self.next_window(length)
+
+        if nr is not None:
+            # Window number defined
+            for nr in xrange(nr):
+                yield self.next_window(length)
+        else:
+            # Stop position defined
+            while self.position + length < stop:
+                yield self.next_window(length)
 
 
-class Detector(object):
+class Signal(object):
 
-    def __init__(self, levels, average=1):
-        self.buffer = None
-        self.average = average
-        self.levels = levels
+    def __init__(self, data=None, start=0):
 
-    def digitize(self, data, signal, levels=None):
+        # Define signals numpy datatype
+        self._dlevel = np.dtype([('state', np.int16),
+                                 ('length', np.int64),
+                                 ('value', np.float64)])
 
-        if levels is not None:
-            self._levels = levels
+        if not data:
+            self.data = np.array([(-1, 0, 0)], dtype=self._dlevel)
+        else:
+            self.data = np.array(data, dtype=self._dlevel)
+        self.start = start
 
-        # Put buffer infront of input data
-        try:
-            data = np.concatenate([self.buffer, data])
-        except ValueError:
-            pass
+    def __repr__(self):
+        return repr(self.data)
 
-        self.buffer = digitize(data, signal, int(self.average),  *self.levels)
+    def __getitem__(self, key):
+        return self.data[key]
 
-        return levels
+    def __len__(self):
+        return self.data.size
+
+    def append(self, data):
+        new_data = np.array(data, dtype=self._dlevel)
+        self.data = np.concatenate((self.data, new_data))
+
+    @property
+    def position(self):
+        return self.start + np.cumsum(self.data['length'])
+
+    @property
+    def state(self):
+        return self.data['state']
+
+    @property
+    def length(self):
+        return self.data['length']
+
+    @property
+    def value(self):
+        return self.data['value']
+
+    @property
+    def mean(self):
+        return self.data['value'].mean()
 
 
 class SignalFile(object):
@@ -317,11 +350,10 @@ class SignalFile(object):
         line = linestr.replace(' ', '').split(self._seperator)
 
         # Create a level from the line
-        position = self._next_position
         state = int(line[0])
         length = int(line[1])
         value = float(line[2])
-        level = [position, state, length, value]
+        level = [state, length, value]
 
         # Calculate the position of next level and increment event
         self._next_position += length
@@ -375,6 +407,56 @@ class SignalFile(object):
 
     def read_range(self, start=0, stop=None):
         return list(self.range(start, stop))
+
+
+class Level(object):
+
+    def __init__(self, center, sigma, rel=True):
+        self.center = center
+        self.sigma = abs(sigma)
+
+    def __repr__(self):
+        return 'Level(' + str(self.center) + ', ' + str(self.sigma) + ')'
+
+    @property
+    def low(self):
+        return self.center - self.sigma
+
+    @property
+    def high(self):
+        return self.center + self.sigma
+
+    @property
+    def rel(self):
+        return (self.center, self.sigma)
+
+    @property
+    def abs(self):
+        return (self.low, self.high)
+
+
+class System(object):
+
+    def __init__(self, *levels):
+        self._levels = levels
+
+    def __getitem__(self, key):
+        return self._levels[key]
+
+    def __repr__(self):
+        s = 'System:'
+        for nr, level in enumerate(self._levels):
+            s += '\n'
+            s += str(nr) + ': ' + str(level)
+
+        return s
+
+    def __len__(self):
+        return len(self._levels)
+
+    @property
+    def nr_of_levels(self):
+        return self.__len__()
 
 
 class Histogram(object):
@@ -613,8 +695,10 @@ def fit_levels(data, start_parameters):
     # Filter levels=(mu_0, sigma_0, ..., mu_N, sigma_N)
     index = np.array([False, True, True] * (len(fit.parameters) / 3))
     levels = fit.parameters[index]
+    system = System(*[Level(levels[i], levels[i+1])
+                    for i in xrange(0, len(levels), 2)])
 
-    return levels, fit, histo
+    return system, fit, histo
 
 
 def fit_trace(windows, start_parameters, fitfile=None):
