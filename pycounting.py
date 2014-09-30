@@ -1,18 +1,17 @@
 # -*- coding: utf-8 -*-
 
 import os
-import struct
-import time
 import numpy as np
+from collections import defaultdict
 from scipy.optimize import curve_fit
 
 
-class BinaryData(object):
+class Trace(object):
     """Handle binary counting data files very flexible.
 
     """
 
-    def __init__(self, filelist, datatype, byte_order=None):
+    def __init__(self, filelist, datatype):
 
         # Store the filelist
         self._filelist = filelist
@@ -25,18 +24,17 @@ class BinaryData(object):
         # Set position to first file
         self._fileobj = self._fileobjs[0]
 
-        # Store the struct information
-        if datatype == 'int':
-            self._struct_format = 'i'
-        elif datatype == 'ushort':
-            self._struct_format = 'H'
+        # Store the datatype information
+        self._datatype = datatype
+
+        if self._datatype in ['int', 'int32']:
+            self._dtype = np.dtype(np.int32)
+        elif self._datatype == 'ushort':
+            self._dtype = ''
         else:
-            self._struct_format = datatype
+            raise TypeError('Unsupported datatype')
 
-        if byte_order:
-            self._struct_format = byte_order + self._struct_format
-
-        self._datapointsize = struct.calcsize(self._struct_format)
+        self._datapointsize = self._dtype.itemsize
 
         # Calculate the size in bytes of all files
         self._datasize = 0
@@ -52,6 +50,8 @@ class BinaryData(object):
             position += os.path.getsize(filename) / self._datapointsize
             self._file_stop_positions.append(position)
 
+        self._datapoint = 0
+
     def __del__(self):
         """Close all datafiles.
 
@@ -59,37 +59,53 @@ class BinaryData(object):
         for fileobj in self._fileobjs:
             fileobj.close()
 
+    def __len__(self):
+        """The number of datapoints.
+
+        """
+        return self.points
+
+    def __getitem__(self, key):
+        if isinstance(key, slice):
+            return self.range(*key.indices(len(self)))
+        elif isinstance(key, int):
+            self.position = key
+            return self.next()
+        else:
+            raise TypeError('Trace indices must be integers, not ' +
+                            type(key).__name__)
+
+    def __iter__(self):
+        """Iterator over all trace.
+
+        """
+        self.position = 0
+        return self
+
     @property
     def filelist(self):
-        """Return list of filenames.
+        """List of filenames.
 
         """
         return self._filelist
 
     @property
     def datasize(self):
-        """Return the size of all files in kBytes.
+        """The size of all files in kBytes.
 
         """
         return self._datasize
 
     @property
-    def struct_format(self):
-        """Return the struct format.
+    def datatype(self):
+        """The datatype.
 
         """
-        return self._struct_format
-
-    @property
-    def datapointsize(self):
-        """Return the size of one datapoint in kBytes.
-
-        """
-        return self._datapointsize
+        return self._datatype
 
     @property
     def points(self):
-        """Return the number of datapoints in all files.
+        """The number of datapoints.
 
         """
         return self._file_stop_positions[-1]
@@ -109,19 +125,25 @@ class BinaryData(object):
 
         return file_start_position + file_current_position
 
+    def _get_position(self, position):
+
+        if position < 0:
+            position += self._file_stop_positions[-1]
+
+        # Raise IndexError if out of range
+        if ((position < 0) or (position > self._file_stop_positions[-1])):
+            raise IndexError('position out of range')
+
+        return position
+
     @position.setter
     def position(self, position):
         """Set the current datapoint position.
 
         """
 
-        # If negative position calculate the corresponding positive position
-        if position < 0:
-            position += self._file_stop_positions[-1]
-
-            # Raise IndexError if out of range
-            if position < 0:
-                raise IndexError('position out of range')
+        # Make sure the position is valid positive number
+        position = self._get_position(position)
 
         # Check if position is valid otherwise raise IndexError
         if ((position < 0) or (position > self._file_stop_positions[-1])):
@@ -139,44 +161,84 @@ class BinaryData(object):
         file_position = datapoint_nr * self._datapointsize
         self._fileobj.seek(file_position, 0)
 
-    def read(self, points=-1, position=None):
-        """Read number of points after position and return them as a list.
-
-        If position is None the reading starts at the current position.
+    def next(self):
+        """Return next datapoint of trace.
 
         """
 
-        # Set the position if not None
-        if not position is None:
-            self.position = long(position)
+        datapoint, = self.next_window(1)
+        return datapoint
 
-        start  = self.position
+    def next_window(self, length):
+        """Return np.array with next datapoints of trace.
 
-        # Creat a list to store the data
-        data = []
+        """
 
-        # Read the points
-        while(points):
-            try:
-                datastring = self._fileobj.read(self._datapointsize)
-                data += struct.unpack(self._struct_format, datastring)
-                points -= 1
-            except KeyboardInterrupt:
-                raise
-            except:
-                file_index = self._fileobjs.index(self._fileobj)
-                try:
-                    self._fileobj = self._fileobjs[file_index + 1]
-                    self._fileobj.seek(0)
-                except IndexError:
-                    break
+        # Every other data method uses this next_window method
 
-        stop = self.position
+        # Get the array of length
+        length = int(length)
+        data = np.fromfile(self._fileobj, self._dtype, length)
 
-        return np.array(data), (start, stop)
+        # Check array size to find end of file
+        rest = length - data.size
+        if rest:
+            # Update position for next file
+            self.position = self.position
+            data = np.append(data,
+                             np.fromfile(self._fileobj, self._dtype, rest))
+
+        return data
+
+    def range(self, start, stop, step=None):
+        """Return numpy array between start and stop.
+
+        """
+        # Handle negative positions
+        stop = self._get_position(stop)
+
+        self.position = int(start)
+        length = stop - start
+        return self.next_window(length)[::step]
+
+    def windows(self, length, start=None, stop=None, offset=None):
+
+        if start is not None:
+            start = self._get_position(start)
+            self.position = int(start)
+        if stop is None:
+            stop = self._file_stop_positions[-1]
+
+        stop = self._get_position(stop)
+
+        while self.position + length < stop:
+            yield self.next_window(length)
 
 
-class FCSignal(object):
+class Detector(object):
+
+    def __init__(self, levels, average=1):
+        self.buffer = None
+        self.average = average
+        self.levels = levels
+
+    def digitize(self, data, signal, levels=None):
+
+        if levels is not None:
+            self._levels = levels
+
+        # Put buffer infront of input data
+        try:
+            data = np.concatenate([self.buffer, data])
+        except ValueError:
+            pass
+
+        self.buffer = digitize(data, signal, int(self.average),  *self.levels)
+
+        return levels
+
+
+class SignalFile(object):
     """Handel FCSignal files.
 
     """
@@ -187,161 +249,390 @@ class FCSignal(object):
         self._filename = filename
         self._fileobj = open(self._filename, 'rb')
 
+        # Set seperator of fcsignal txtfile
         self._seperator = seperator
 
-        self._event = 0
-        self._position = 0
+        # Set event and position to the start of the fcsignal
+        self._goto_start()
 
-    def _next_line(self):
-        linestr = self._fileobj.readline()
-        self._event += 1
+    def _goto_start(self):
+        """Go back to start position in fcsignal.
 
-        line = linestr.replace(' ', '').split(self._seperator)
-
-        self._position += int(line[1])
-        level = int(line[0])
-        length = int(line[1])
-        value = float(line[2])
-
-        return [level, self._position, length, value]
-
-    @property
-    def event(self):
-        return self._event
-
+        """
+        self._fileobj.seek(0)
+        self._next_position = 0
+        self._next_event = 0
 
     def __getitem__(self, key):
-
-        # Go back
-        if self._event > key:
-            self._fileobj.seek(0)
-            self._event = 0
-            self._position = 0
-
-        while self._event <= key:
-            line = self._next_line()
-
-        return line
-
-
-
-    @property
-    def filelist(self):
-        """Return list of filenames.
-
-        """
-        return self._filelist
-
-    def __iter__(self):
-         for line in self._fileobj:
-             yield line
-
-    def read(self, start=0, stop=None, steps=-1):
-        """Read data from fcsignal and return numpy array.
-
-        """
-
-        level = []
-        position = []
-        length = []
-        value = []
-
-        counter = 0
-
-        for line in self.__iter__:
-
-            line = line.replace(' ', '').split(';')
-            counter += int(line[1])
-
-            # Check start position
-            if counter < start:
-                continue
-
-            # Check stop position
-            if stop:
-                if position > stop:
-                    break
-
-            # Turn the strings into values
-            level.append(int(line[0]))
-            position.append(counter)
-            length.append(int(line[1]))
-            value.append(float(line[2]))
-
-            steps -= 1
-            if not steps:
-                break
-
-        # Return everything as numpy array
-        return np.array([level, position, length, value])
+        self.event_nr = key
+        return self.next()
 
     @property
     def position(self):
-        return self._position
+        """Get and set the position.
+
+        Postion will always be the next event of set position.
+        """
+        return self._next_position
 
     @position.setter
-    def position(self):
-        pass
+    def position(self, position):
+        if position < self.position:
+            self._goto_start()
 
-    def times(self):
-        pass
+        while self.position < position:
+            self.next()
+
+    @property
+    def event_nr(self):
+        """Get and set the event.
+
+        """
+        return self._next_event
+
+    @event_nr.setter
+    def event_nr(self, nr):
+        if nr < self.event_nr:
+            self._goto_start()
+
+        while self.event_nr < nr:
+            self.next()
+
+    def __iter__(self):
+        self._goto_start()
+        return self
+
+    def next(self):
+        """Return next event of signal.
+
+        """
+
+        # Read next line from fcsignal file
+        linestr = self._fileobj.readline()
+
+        if not linestr:
+            raise StopIteration
+
+        # Split the line
+        line = linestr.replace(' ', '').split(self._seperator)
+
+        # Create a level from the line
+        position = self._next_position
+        state = int(line[0])
+        length = int(line[1])
+        value = float(line[2])
+        level = [position, state, length, value]
+
+        # Calculate the position of next level and increment event
+        self._next_position += length
+        self._next_event += 1
+
+        # Return the level
+        return level
+
+    def events(self, start=0, stop=None):
+        """Return event iterator.
+
+        """
+
+        self.event_nr = start
+
+        while self._next_event < stop or stop is None:
+            yield self.next()
+
+    def next_events(self, nr_of_events):
+        """Return number of events in length.
+
+        """
+        start = self.event_nr
+        stop = start + nr_of_events
+
+        for event in self.events(start, stop):
+            yield event
+
+    def read_events(self, start=0, stop=None):
+        return list(self.events(start, stop))
+
+    def range(self, start=0, stop=None):
+        """Return interator over range (start, stop].
+
+        """
+
+        self.position = start
+
+        while self._next_position < stop or stop is None:
+            yield self.next()
+
+    def next_range(self, length):
+        """Return number of events in length.
+
+        """
+        start = self.position
+        stop = start + length
+
+        for event in self.range(start, stop):
+            yield event
+
+    def read_range(self, start=0, stop=None):
+        return list(self.range(start, stop))
 
 
-def fit_levels(fctrace, window, start_values, fitfilename, offsets=None,
-               printing=True, timing=False, exceptions=True):
+class Histogram(object):
 
-    # Create offsets from window length and fctrace
-    if not offsets:
-        offsets = range(0, fctrace.points, window)
+    def __init__(self, data, bins=1000, range=None):
+        self._freqs, self._bins = np.histogram(data, bins, range)
 
-    nr_of_offsets = len(offsets)
-    window = int(window)
+    def add(self, data):
+        """Add data to the histogram.
 
-    # --- Fitting --- #
-    fitfile = open(fitfilename, 'w')
+        """
+        self._freqs += np.histogram(data, self._bins)[0]
 
-    fit_values = np.array(start_values)
-    data = []
+    @property
+    def elements(self):
+        """Return number of elements in histogram.
+
+        """
+        return self._freqs.sum()
+
+    @property
+    def bins(self):
+        """Return bin values.
+
+        """
+        # Filter off empty frequency bins (necassary for fitting and plotting)
+        return self._bins[:-1][self._freqs > 0]
+
+    @property
+    def freqs(self):
+        """Return frequencies.
+
+        """
+        # Filter off empty frequency bins (necassary for fitting and plotting)
+        return self._freqs[self._freqs > 0]
+
+    @property
+    def freqs_n(self):
+        """Return normed frequencies.
+
+        """
+        return self.freqs / float(self.elements)
+
+    @property
+    def values(self):
+        """Return pair of bins and frequencies."""
+        return self.bins, self.freqs
+
+    @property
+    def values_n(self):
+        """Return pair of bins and normed frequencies."""
+        return self.bins, self.freqs_n
 
 
-    # Cycle through the data
-    for nr, offset in enumerate(offsets, 1):
+class PyHistogram(object):
 
-        # Starting time
-        tstart = time.time()
+    def __init__(self, datapoints=[]):
+        self.comment = ''
+        self._elements = 0
+        self._histo = defaultdict(int)
 
-        # Read data in window
-        data, data_range = fctrace.read(window, offset)
+        self.add(datapoints)
 
-        # Create histogram
-        bins = data.max() - data.min()
-        histogram = np.histogram(data, bins, normed=True)
+    def __getitem__(self, bin):
+        return self._histo[bin]
 
-        # Perform the fit
-        x = histogram[1][:-1]
-        y = histogram[0]
+    @property
+    def elements(self):
+        """Return number of elements in histogram.
 
+        """
+        return self._elements
+
+    def add_datapoint(self, bin, freq=1):
+        """Add freq to bin.
+
+        """
+        self._histo[bin] += freq
+        self._elements += freq
+
+    def add(self, datapoints):
+
+        # Try to iterate over data
         try:
-            fit_values, b = curve_fit(normal, x, y, fit_values)
-        except RuntimeError:
-            if exceptions:
-                raise RuntimeError
+            for datapoint in datapoints:
+                self._histo[datapoint] += 1
+                self._elements += 1
+        # If not iteratable just insert
+        except TypeError:
+            self.add_datapoint(datapoints)
 
-        # Save the fit paras
-        para_str = str(offset) + ', ' + str(fit_values.tolist())[1:-1]
-        fitfile.write(para_str + '\n')
-        fitfile.flush()
+    @property
+    def bins(self):
+        bins = np.array(self._histo.keys())
+        return bins
 
-        # Print the number of remaing fits
-        if printing:
-            print nr_of_offsets - nr,
+    @property
+    def freqs(self):
+        """Return frequencies.
 
-        # Print the time for one fit
-        if timing:
-            print time.time() - tstart,
+        """
+        freqs = np.array(self._histo.values())
+        return freqs
 
-    #Close fit file
-    fitfile.close()
+    @property
+    def freqs_n(self):
+        """Return normed frequencies.
+
+        """
+        return self.freqs / float(self.elements)
+
+
+class Times(object):
+
+    def __init__(self):
+        self._times = {}
+
+    def __getitem__(self, key):
+        return self._times[key]
+
+    def add(self, signal):
+
+        # Iterate over all signals
+        for level in signal:
+
+            state = level[0]
+            length = level[1]
+
+            try:
+                histo = self._times[state]
+            except KeyError:
+                histo = Histogram()
+                self._times[state] = histo
+
+            # Update date time distribution dictonary
+            histo.add_datapoint(length, 1)
+
+
+class Fit(object):
+
+    def __init__(self, function, xdata, ydata, start_parameters):
+        self._function = function
+        self._parameters, self._error = curve_fit(function, xdata, ydata,
+                                                  start_parameters)
+
+    def __call__(self, x):
+        return self._function(x, *self._parameters)
+
+    def values(self, x):
+        y = self._function(x, *self._parameters)
+        return x, y
+
+    @property
+    def function(self):
+        return self._function
+
+    @property
+    def parameters(self):
+        return self._parameters
+
+    @property
+    def error(self):
+        return self._error
+
+
+def flinear(x, m=1, y0=0):
+    """Linear function.
+
+    """
+    x = np.array(x, copy=False)
+    return m * x + y0
+
+
+def fit_linear(xdata, ydata, m=1, y0=0):
+    """Fit data with linear function.
+
+    """
+    return Fit(flinear, xdata, ydata, (m, y0))
+
+
+def fexp(x, a=1, tau=1):
+    """Exponential function.
+    """
+    x = np.array(x, copy=False)
+    return a * np.exp(tau * x)
+
+
+def fit_exp(xdata, ydata, a=1, tau=1):
+    """Fit data with exponential function.
+
+    """
+    return Fit(fexp, xdata, ydata, (a, tau))
+
+
+def fnormal(x, a=1, mu=0, sigma=1):
+    """Normal distribution.
+
+    """
+    x = np.array(x, copy=False)
+    return a * np.exp(-(x - mu)**2 / (2. * sigma**2))
+
+
+def fit_normal(xdata, ydata, a=1, mu=0, sigma=1):
+    """Fit data with a normal distribution.
+
+    """
+    return Fit(fnormal, xdata, ydata, (a, mu, sigma))
+
+
+def flevels(x, *parameters):
+    """Sum function of N differnt normal distributions.
+
+    parameters: (a_0, mu_0 sigma_0, .... a_N, mu_N, sigma_N)
+    """
+    x = np.array(x, copy=False)
+
+    # Create parameter triples (a_0, mu_0 sigma_0) ,... ,(a_N, mu_N, aigma_N)
+    triples = (parameters[i:i+3] for i in range(0, len(parameters), 3))
+
+    # (fnormal(x, a_0, mu_0 sigma_0) + ... + fnormal(x, a_0, mu_0 sigma_0)
+    summands = (fnormal(x, *triple) for triple in triples)
+
+    return np.sum(summands, 0)
+
+
+def fit_levels(data, start_parameters):
+    """Create histogram from data and fit with a normal function.
+
+    start_parameters: (a_0, mu_0 sigma_0, .... a_N, mu_N, sigma_N)
+    """
+
+    # Create histogram and filter everything
+    histo = Histogram(data)
+    fit = Fit(flevels, histo.bins, histo.freqs_n, start_parameters)
+
+    # Filter levels=(mu_0, sigma_0, ..., mu_N, sigma_N)
+    index = np.array([False, True, True] * (len(fit.parameters) / 3))
+    levels = fit.parameters[index]
+
+    return levels, fit, histo
+
+
+def fit_trace(windows, start_parameters, fitfile=None):
+    fit_parameters = []
+
+    for window in windows:
+        levels, fit, histogram = fit_levels(window, start_parameters)
+        fit_parameters.append(tuple(fit.parameters))
+        start_parameters = fit.parameters
+
+    # Write data to fitfile
+    if fitfile:
+        try:
+            fobj = open(fitfile)
+        except TypeError:
+            pass
+
+    return fit_parameters
 
 
 def read_fitfile(fitfile):
@@ -406,40 +697,13 @@ def dtr(values, bits=16, min=-10, max=10):
     return np.array(values)
 
 
-class Histogram(object):
-
-    def __init__(self):
-        self.elements = 0
-        self.comment = ''
-        self._data = np.array([])
-
-    def __getitem__(self, key):
-        return self._data[key]
-
-    @property
-    def data(self):
-        return self._data
-
-    @data.setter
-    def data(self, data):
-        self._data = data
-
-    @property
-    def bins(self):
-        return self._data[0]
-
-    @property
-    def freqs(self):
-        return self._data[1]
-
-
 def create_histogram(data, normed=True, comment=''):
     """Create a histogram out of a data list.
 
     """
 
     # Create histogram instance
-    histogram = Histogram()
+    histogram = PyHistogram()
 
     # Make numpy array out of data
     data = np.array(data)
@@ -477,7 +741,7 @@ def read_histogram(histogram_file):
 
                     # Read section data
                     if section == 'fchistogram':
-                        histograms.append(Histogram())
+                        histograms.append(PyHistogram())
                         del bins[:]
                         del items[:]
                     elif section == '/fchistogram':
@@ -505,203 +769,6 @@ def read_histogram(histogram_file):
     return histograms
 
 
-def linear(xdata, slope=1, yintercept=0):
-
-    # Make numpy array out of data
-    xdata = np.array(xdata)
-
-    return slope * xdata + yintercept
-
-
-def fit_linear(xdata, ydata, slope=1, yintercept=0, function=True):
-
-    ydata = np.array(ydata)
-    start_paras = np.array([slope, yintercept])
-
-    fit = curve_fit(linear, xdata, ydata, start_paras)
-
-    if function:
-        return linear(xdata, *fit[0])
-    else:
-        return fit
-
-
-def exp(xdata, a=1, tau=1):
-
-    # Make numpy array out of data
-    xdata = np.array(xdata)
-
-    return a * np.exp(tau * xdata)
-
-
-def fit_exp(xdata, ydata, a=1, tau=1, function=True):
-
-    xdata = np.array(xdata)
-    ydata = np.array(ydata)
-    start_paras = np.array([a, tau])
-
-    fit = curve_fit(exp, xdata, ydata, start_paras)
-
-    if function:
-        return exp(xdata, *fit[0])
-    else:
-        return fit
-
-
-# Multiple Gauss functions added
-def normal(x, *parameters):
-    """Create a gauss sum function from on the parameter list.
-
-    """
-
-    # Define gauss function
-    def normal(x, sigma, mu, A):
-        x = np.array(x)
-        return A * np.exp(-(x - mu)**2 / (2. * sigma**2))
-
-    x = np.array(x)
-    res = np.zeros(x.size)
-
-    pars_list = [parameters[i:i+3] for i in range(0, len(parameters), 3)]
-
-    for pars in pars_list:
-        res += normal(x, *pars)
-
-    return res
-
-
-def fit_normal(xdata, ydata, function=True, *parameters):
-
-        # Make numpy arrays out of data
-        xdata = np.array(xdata)
-        ydata = np.array(ydata)
-
-        start_paras = np.array(parameters)
-
-        fit = curve_fit(normal, xdata, ydata, start_paras)
-
-        if function:
-            return normal(xdata, *fit[0])
-        else:
-            return fit
-
-
-
-
-
-def read_fcsignal(fcsignal_file, start=0, stop=None, steps=-1):
-    """Read data from fcsignal.
-
-    """
-
-    level = []
-    position = []
-    length = []
-    value = []
-
-    counter = 0
-
-    with open(fcsignal_file, 'r') as fcsignal_fobj:
-
-        #Cut file header
-        fcsignal_fobj.readline()
-
-        #Read Data
-        for line in fcsignal_fobj:
-            line = line.replace(' ', '').split(';')
-            counter += int(line[1])
-
-            # Check start position
-            if counter < start:
-                continue
-
-            # Check stop position
-            if stop:
-                if position > stop:
-                    break
-
-            # Turn the strings into values
-            level.append(int(line[0]))
-            position.append(counter)
-            length.append(int(line[1]))
-            value.append(float(line[2]))
-
-            steps -= 1
-            if not steps:
-                break
-
-    # Return everything as numpy array
-    return np.array([level, position, length, value])
-
-
-def time_distribution(fcsignal, start=0, stop=None, steps=-1, seperator=';'):
-    """Extract time distributions from the fcsignal.
-
-    """
-
-    # Define start parameters
-    start = int(start)
-    if stop:
-        stop  = int(stop)
-    steps = int(steps)
-    position = 0
-
-    # Create level directory to store time distributions
-    times = {}
-
-    with open(fcsignal, 'r') as fcsignal_fobj:
-
-        #Cut file header
-        fcsignal_fobj.readline()
-
-        #Read Data
-        for line in fcsignal_fobj:
-
-            # Split signal line
-            line = line.rstrip()
-            line = line.replace(' ', '').split(seperator)
-
-            # Get level values
-            level  = int(line[0])
-            position += int(line[1])
-            length = int(line[1])
-
-            # Check start position
-            if position < start:
-                continue
-
-            # Check stop position
-            if stop:
-                if position > stop:
-                    break
-
-            # Get the time distribution from level dictonary or create it
-            try:
-                histo = times[level]
-            except KeyError:
-                histo = {}
-                times[level] = histo
-
-            # Update date time distribution dictonary
-            try:
-                freq = histo[length]
-                histo[length] = freq + 1
-            except KeyError:
-                histo[length] = 1
-
-            steps -= 1
-            if not steps:
-                break
-
-    #Format the dictonaries
-    for level, histo in times.items():
-        histogram = Histogram()
-        histogram.data = np.array([histo.keys(), histo.values()])
-        times[level] = histogram
-
-    return times
-
-
 def read_cummulants(cummulants_file):
     """Read the cummulants from file.
 
@@ -719,6 +786,3 @@ def read_cummulants(cummulants_file):
             data.append(line)
 
     return np.transpose(data)
-
-
-
