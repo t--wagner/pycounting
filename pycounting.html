@@ -1,0 +1,138 @@
+
+<!DOCTYPE html PUBLIC "-//W3C//DTD HTML 4.0 Transitional//EN">
+<html><head><title>Python: module pycounting</title>
+</head><body bgcolor="#f0f0f8">
+
+<table width="100%" cellspacing=0 cellpadding=2 border=0 summary="heading">
+<tr bgcolor="#7799ee">
+<td valign=bottom>&nbsp;<br>
+<font color="#ffffff" face="helvetica, arial">&nbsp;<br><big><big><strong>pycounting</strong></big></big></font></td
+><td align=right valign=bottom
+><font color="#ffffff" face="helvetica, arial"><a href=".">index</a><br><a href="file:/home/wagner/pycounting/pycounting.py">/home/wagner/pycounting/pycounting.py</a></font></td></tr></table>
+    <p><tt>#&nbsp;-*-&nbsp;coding:&nbsp;utf-8&nbsp;-*-</tt></p>
+<p>
+<table width="100%" cellspacing=0 cellpadding=2 border=0 summary="section">
+<tr bgcolor="#aa55cc">
+<td colspan=3 valign=bottom>&nbsp;<br>
+<font color="#ffffff" face="helvetica, arial"><big><strong>Modules</strong></big></font></td></tr>
+    
+<tr><td bgcolor="#aa55cc"><tt>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</tt></td><td>&nbsp;</td>
+<td width="100%"><table width="100%" summary="list"><tr><td width="25%" valign=top><a href="numpy.html">numpy</a><br>
+</td><td width="25%" valign=top><a href="os.html">os</a><br>
+</td><td width="25%" valign=top><a href="struct.html">struct</a><br>
+</td><td width="25%" valign=top><a href="time.html">time</a><br>
+</td></tr></table></td></tr></table><p>
+<table width="100%" cellspacing=0 cellpadding=2 border=0 summary="section">
+<tr bgcolor="#ee77aa">
+<td colspan=3 valign=bottom>&nbsp;<br>
+<font color="#ffffff" face="helvetica, arial"><big><strong>Classes</strong></big></font></td></tr>
+    
+<tr><td bgcolor="#ee77aa"><tt>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</tt></td><td>&nbsp;</td>
+<td width="100%"><dl>
+<dt><font face="helvetica, arial"><a href="__builtin__.html#object">__builtin__.object</a>
+</font></dt><dd>
+<dl>
+<dt><font face="helvetica, arial"><a href="pycounting.html#BinaryData">BinaryData</a>
+</font></dt><dt><font face="helvetica, arial"><a href="pycounting.html#Histogram">Histogram</a>
+</font></dt></dl>
+</dd>
+</dl>
+ <p>
+<table width="100%" cellspacing=0 cellpadding=2 border=0 summary="section">
+<tr bgcolor="#ffc8d8">
+<td colspan=3 valign=bottom>&nbsp;<br>
+<font color="#000000" face="helvetica, arial"><a name="BinaryData">class <strong>BinaryData</strong></a>(<a href="__builtin__.html#object">__builtin__.object</a>)</font></td></tr>
+    
+<tr><td bgcolor="#ffc8d8"><tt>&nbsp;&nbsp;&nbsp;</tt></td><td>&nbsp;</td>
+<td width="100%">Methods defined here:<br>
+<dl><dt><a name="BinaryData-__del__"><strong>__del__</strong></a>(self)</dt><dd><tt>Close&nbsp;all&nbsp;datafiles.</tt></dd></dl>
+
+<dl><dt><a name="BinaryData-__init__"><strong>__init__</strong></a>(self, filelist, datatype, byte_order<font color="#909090">=None</font>)</dt></dl>
+
+<dl><dt><a name="BinaryData-read"><strong>read</strong></a>(self, points<font color="#909090">=-1</font>, position<font color="#909090">=None</font>)</dt><dd><tt>Read&nbsp;number&nbsp;of&nbsp;points&nbsp;after&nbsp;position&nbsp;and&nbsp;return&nbsp;them&nbsp;as&nbsp;a&nbsp;list.<br>
+&nbsp;<br>
+If&nbsp;position&nbsp;is&nbsp;None&nbsp;the&nbsp;reading&nbsp;starts&nbsp;at&nbsp;the&nbsp;current&nbsp;position.</tt></dd></dl>
+
+<hr>
+Data descriptors defined here:<br>
+<dl><dt><strong>__dict__</strong></dt>
+<dd><tt>dictionary&nbsp;for&nbsp;instance&nbsp;variables&nbsp;(if&nbsp;defined)</tt></dd>
+</dl>
+<dl><dt><strong>__weakref__</strong></dt>
+<dd><tt>list&nbsp;of&nbsp;weak&nbsp;references&nbsp;to&nbsp;the&nbsp;object&nbsp;(if&nbsp;defined)</tt></dd>
+</dl>
+<dl><dt><strong>datapointsize</strong></dt>
+<dd><tt>Return&nbsp;the&nbsp;size&nbsp;of&nbsp;one&nbsp;datapoint&nbsp;in&nbsp;kBytes.</tt></dd>
+</dl>
+<dl><dt><strong>datasize</strong></dt>
+<dd><tt>Return&nbsp;the&nbsp;size&nbsp;of&nbsp;all&nbsp;files&nbsp;in&nbsp;kBytes.</tt></dd>
+</dl>
+<dl><dt><strong>filelist</strong></dt>
+<dd><tt>Return&nbsp;list&nbsp;of&nbsp;filenames.</tt></dd>
+</dl>
+<dl><dt><strong>nr_of_files</strong></dt>
+<dd><tt>Return&nbsp;the&nbsp;number&nbsp;of&nbsp;added&nbsp;files.</tt></dd>
+</dl>
+<dl><dt><strong>points</strong></dt>
+<dd><tt>Return&nbsp;the&nbsp;number&nbsp;of&nbsp;datapoints&nbsp;in&nbsp;all&nbsp;files.</tt></dd>
+</dl>
+<dl><dt><strong>position</strong></dt>
+<dd><tt>Return&nbsp;the&nbsp;current&nbsp;datapoint&nbsp;position.</tt></dd>
+</dl>
+<dl><dt><strong>struct_format</strong></dt>
+<dd><tt>Return&nbsp;the&nbsp;struct&nbsp;format.</tt></dd>
+</dl>
+</td></tr></table> <p>
+<table width="100%" cellspacing=0 cellpadding=2 border=0 summary="section">
+<tr bgcolor="#ffc8d8">
+<td colspan=3 valign=bottom>&nbsp;<br>
+<font color="#000000" face="helvetica, arial"><a name="Histogram">class <strong>Histogram</strong></a>(<a href="__builtin__.html#object">__builtin__.object</a>)</font></td></tr>
+    
+<tr><td bgcolor="#ffc8d8"><tt>&nbsp;&nbsp;&nbsp;</tt></td><td>&nbsp;</td>
+<td width="100%">Methods defined here:<br>
+<dl><dt><a name="Histogram-__getitem__"><strong>__getitem__</strong></a>(self, key)</dt></dl>
+
+<dl><dt><a name="Histogram-__init__"><strong>__init__</strong></a>(self)</dt></dl>
+
+<dl><dt><a name="Histogram-__repr__"><strong>__repr__</strong></a>(self)</dt></dl>
+
+<hr>
+Data descriptors defined here:<br>
+<dl><dt><strong>__dict__</strong></dt>
+<dd><tt>dictionary&nbsp;for&nbsp;instance&nbsp;variables&nbsp;(if&nbsp;defined)</tt></dd>
+</dl>
+<dl><dt><strong>__weakref__</strong></dt>
+<dd><tt>list&nbsp;of&nbsp;weak&nbsp;references&nbsp;to&nbsp;the&nbsp;object&nbsp;(if&nbsp;defined)</tt></dd>
+</dl>
+<dl><dt><strong>bins</strong></dt>
+</dl>
+<dl><dt><strong>data</strong></dt>
+</dl>
+<dl><dt><strong>freqs</strong></dt>
+</dl>
+</td></tr></table></td></tr></table><p>
+<table width="100%" cellspacing=0 cellpadding=2 border=0 summary="section">
+<tr bgcolor="#eeaa77">
+<td colspan=3 valign=bottom>&nbsp;<br>
+<font color="#ffffff" face="helvetica, arial"><big><strong>Functions</strong></big></font></td></tr>
+    
+<tr><td bgcolor="#eeaa77"><tt>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</tt></td><td>&nbsp;</td>
+<td width="100%"><dl><dt><a name="-create_histogram"><strong>create_histogram</strong></a>(data, normed<font color="#909090">=True</font>, comment<font color="#909090">=''</font>)</dt><dd><tt>Create&nbsp;a&nbsp;histogram&nbsp;out&nbsp;of&nbsp;a&nbsp;data&nbsp;list.</tt></dd></dl>
+ <dl><dt><a name="-dtr"><strong>dtr</strong></a>(values, bits<font color="#909090">=16</font>, min<font color="#909090">=-10</font>, max<font color="#909090">=10</font>)</dt></dl>
+ <dl><dt><a name="-exp"><strong>exp</strong></a>(xdata, a<font color="#909090">=1</font>, tau<font color="#909090">=1</font>)</dt></dl>
+ <dl><dt><a name="-fit_exp"><strong>fit_exp</strong></a>(xdata, ydata, a<font color="#909090">=1</font>, tau<font color="#909090">=1</font>, function<font color="#909090">=True</font>)</dt></dl>
+ <dl><dt><a name="-fit_levels"><strong>fit_levels</strong></a>(fctrace, window, start_values, fitfilename, offsets<font color="#909090">=None</font>, printing<font color="#909090">=True</font>, timing<font color="#909090">=False</font>, exceptions<font color="#909090">=True</font>)</dt></dl>
+ <dl><dt><a name="-fit_linear"><strong>fit_linear</strong></a>(xdata, ydata, slope<font color="#909090">=1</font>, yintercept<font color="#909090">=0</font>, function<font color="#909090">=True</font>)</dt></dl>
+ <dl><dt><a name="-fit_normal"><strong>fit_normal</strong></a>(xdata, ydata, function<font color="#909090">=True</font>, *parameters)</dt></dl>
+ <dl><dt><a name="-linear"><strong>linear</strong></a>(xdata, slope<font color="#909090">=1</font>, yintercept<font color="#909090">=0</font>)</dt></dl>
+ <dl><dt><a name="-normal"><strong>normal</strong></a>(x, *parameters)</dt><dd><tt>Create&nbsp;a&nbsp;gauss&nbsp;sum&nbsp;function&nbsp;from&nbsp;on&nbsp;the&nbsp;parameter&nbsp;list.</tt></dd></dl>
+ <dl><dt><a name="-read_cummulants"><strong>read_cummulants</strong></a>(cummulants_file)</dt><dd><tt>Read&nbsp;the&nbsp;cummulants&nbsp;from&nbsp;file.</tt></dd></dl>
+ <dl><dt><a name="-read_fcsignal"><strong>read_fcsignal</strong></a>(fcsignal_file, start_position<font color="#909090">=0</font>, steps<font color="#909090">=-1</font>)</dt><dd><tt>Read&nbsp;data&nbsp;from&nbsp;fcsignal.</tt></dd></dl>
+ <dl><dt><a name="-read_fitfile"><strong>read_fitfile</strong></a>(fitfile)</dt><dd><tt>Read&nbsp;the&nbsp;fitting&nbsp;parameters&nbsp;file&nbsp;created&nbsp;by&nbsp;the&nbsp;fit_levels&nbsp;fucntion.</tt></dd></dl>
+ <dl><dt><a name="-read_histogram"><strong>read_histogram</strong></a>(histogram_file)</dt></dl>
+ <dl><dt><a name="-tc"><strong>tc</strong></a>(sampling_rate, timestr<font color="#909090">='s'</font>)</dt><dd><tt>Returns&nbsp;the&nbsp;time&nbsp;constant&nbsp;based&nbsp;on&nbsp;the&nbsp;sampling&nbsp;rate&nbsp;and&nbsp;timestr.<br>
+&nbsp;<br>
+timestr:&nbsp;'us',&nbsp;'ms',&nbsp;'s',&nbsp;'m',&nbsp;'h',&nbsp;'d'</tt></dd></dl>
+ <dl><dt><a name="-time_distribution"><strong>time_distribution</strong></a>(fcsignal, steps, start_position)</dt></dl>
+</td></tr></table>
+</body></html>
