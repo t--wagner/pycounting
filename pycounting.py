@@ -211,7 +211,6 @@ class Trace(object):
             stop = self._file_stop_positions[-1]
         stop = self._get_position(stop)
 
-
         if nr is not None:
             # Window number defined
             for nr in xrange(nr):
@@ -269,6 +268,12 @@ class Signal(object):
     @property
     def mean(self):
         return self.data['value'].mean()
+
+    def save(self, filename, append=True):
+
+        mode = 'a' if append else 'w'
+        with open('test.dat', mode) as fobj:
+            self.data.tofile(fobj)
 
 
 class SignalFile(object):
