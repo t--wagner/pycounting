@@ -1,9 +1,16 @@
 # -*- coding: utf-8 -*-
 
-import os
+from os.path import getsize
 import numpy as np
 from collections import defaultdict
 from scipy.optimize import curve_fit
+import glob
+
+
+def filelist(pathname):
+    files = glob.glob(pathname)
+    files.sort()
+    return files
 
 
 class Trace(object):
@@ -11,14 +18,16 @@ class Trace(object):
 
     """
 
-    def __init__(self, filelist, datatype):
+    def __init__(self, files, datatype):
 
-        # Store the filelist
-        self._filelist = filelist
+        if isinstance(files, (list, tuple)):
+            self._files = list(files)
+        else:
+            self._files = filelist(files)
 
         # Open all datafiles in readable binary mode
         self._fileobjs = []
-        for filename in self._filelist:
+        for filename in self._files:
             self._fileobjs.append(open(filename, 'rb'))
 
         # Set position to first file
@@ -37,20 +46,16 @@ class Trace(object):
         self._datapointsize = self._dtype.itemsize
 
         # Calculate the size in bytes of all files
-        self._datasize = 0
-        for filename in self._filelist:
-            self._datasize += os.path.getsize(filename)
+        self._datasize = sum(getsize(fname) for fname in self._files)
 
         # Calculate the start and stop positions the files
         self._file_start_positions = []
         self._file_stop_positions = []
         position = 0
-        for filename in self._filelist:
+        for filename in self._files:
             self._file_start_positions.append(position)
-            position += os.path.getsize(filename) / self._datapointsize
+            position += getsize(filename) / self._datapointsize
             self._file_stop_positions.append(position)
-
-        self._datapoint = 0
 
     def __del__(self):
         """Close all datafiles.
@@ -63,11 +68,26 @@ class Trace(object):
         """The number of datapoints.
 
         """
-        return self.points
+        return self._file_stop_positions[-1]
 
     def __getitem__(self, key):
+        """Return numpy array between start and stop.
+
+        """
         if isinstance(key, slice):
-            return self.range(*key.indices(len(self)))
+            # Unpack slice and handle values in slice
+            start = int(key.start) if key.start else 0
+            stop = int(key.stop) if key.stop else self.__len__()
+            step = int(key.step) if key.step else 1
+
+            # Handle negative positions
+            stop = self._tpos(stop)
+
+            # Set position
+            self.position = int(start)
+
+            # Return window
+            return self._next_window(stop - start)[::step]
         elif isinstance(key, int):
             self.position = key
             return self.next()
@@ -83,18 +103,24 @@ class Trace(object):
         return self
 
     @property
-    def filelist(self):
+    def files(self):
         """List of filenames.
 
         """
-        return self._filelist
+        return self._files
 
-    @property
-    def datasize(self):
-        """The size of all files in kBytes.
+    def datasize(self, unit='gb'):
+        """The size of all files in MBytes.
 
         """
-        return self._datasize
+        if unit == 'gb':
+            divider = 1024 * 1024
+        elif unit == 'mb':
+            divider == 1024
+        elif unit == 'kb':
+            divider = 1
+
+        return self._datasize / float(1024)
 
     @property
     def datatype(self):
@@ -103,12 +129,21 @@ class Trace(object):
         """
         return self._datatype
 
-    @property
-    def points(self):
-        """The number of datapoints.
+    def _tpos(self, position):
+        """Handle negative positions and check range.
 
+        Use this internal to handle input.
         """
-        return self._file_stop_positions[-1]
+
+        # Tranform negative position value
+        if position < 0:
+            position += self._file_stop_positions[-1]
+
+        # Raise IndexError if out of range
+        if ((position < 0) or (position > self._file_stop_positions[-1])):
+            raise IndexError('position out of range')
+
+        return position
 
     @property
     def position(self):
@@ -125,17 +160,6 @@ class Trace(object):
 
         return file_start_position + file_current_position
 
-    def _get_position(self, position):
-
-        if position < 0:
-            position += self._file_stop_positions[-1]
-
-        # Raise IndexError if out of range
-        if ((position < 0) or (position > self._file_stop_positions[-1])):
-            raise IndexError('position out of range')
-
-        return position
-
     @position.setter
     def position(self, position):
         """Set the current datapoint position.
@@ -143,7 +167,7 @@ class Trace(object):
         """
 
         # Make sure the position is valid positive number
-        position = self._get_position(position)
+        position = self._tpos(position)
 
         # Check if position is valid otherwise raise IndexError
         if ((position < 0) or (position > self._file_stop_positions[-1])):
@@ -166,10 +190,10 @@ class Trace(object):
 
         """
 
-        datapoint, = self.next_window(1)
+        datapoint, = self._next_window(1)
         return datapoint
 
-    def next_window(self, length):
+    def _next_window(self, length):
         """Return np.array with next datapoints of trace.
 
         """
@@ -190,50 +214,42 @@ class Trace(object):
 
         return data
 
-    def range(self, start, stop, step=None):
-        """Return numpy array between start and stop.
+    def windows(self, length, start=0, stop=None, nr=None):
+        """Iterator over time windows.
 
         """
-        # Handle negative positions
-        stop = self._get_position(stop)
-
-        self.position = int(start)
-        length = stop - start
-        return self.next_window(length)[::step]
-
-    def windows(self, length, start=0, stop=None, nr=None):
 
         if start is not None:
-            start = self._get_position(start)
+            start = self._tpos(start)
             self.position = int(start)
 
         if stop is None:
             stop = self._file_stop_positions[-1]
-        stop = self._get_position(stop)
+        stop = self._tpos(stop)
 
         if nr is not None:
             # Window number defined
             for nr in xrange(nr):
-                yield self.next_window(length)
+                yield self._next_window(length)
         else:
             # Stop position defined
             while self.position + length < stop:
-                yield self.next_window(length)
+                yield self._next_window(length)
 
 
 class Signal(object):
 
-    def __init__(self, data=None, start=0):
+    def __init__(self, data=None, load=None, start=0):
 
         # Define signals numpy datatype
         self._dlevel = np.dtype([('state', np.int16),
                                  ('length', np.int64),
                                  ('value', np.float64)])
 
-        if not data:
-            self.data = np.array([(-1, 0, 0)], dtype=self._dlevel)
-        else:
-            self.data = np.array(data, dtype=self._dlevel)
+        if data is None:
+            data = [(-1, 0, 0)]
+
+        self.data = np.array(data, dtype=self._dlevel)
         self.start = start
 
     def __repr__(self):
@@ -245,35 +261,59 @@ class Signal(object):
     def __len__(self):
         return self.data.size
 
-    def append(self, data):
-        new_data = np.array(data, dtype=self._dlevel)
+    def append(self, levels):
+        """Append new list of levels to signal.
+
+        """
+        new_data = np.array(levels, dtype=self._dlevel)
         self.data = np.concatenate((self.data, new_data))
 
     @property
     def position(self):
+        """Position array of signal.
+
+        """
         return self.start + np.cumsum(self.data['length'])
 
     @property
     def state(self):
+        """Sate array of signal.
+
+        """
         return self.data['state']
 
     @property
     def length(self):
+        """Length array of signal.
+
+        """
         return self.data['length']
 
     @property
     def value(self):
+        """Value array of signal.
+
+        """
         return self.data['value']
 
     @property
     def mean(self):
+        """Mean value of signal.
+        """
         return self.data['value'].mean()
 
-    def save(self, filename, append=True):
+    def save(self, filename):
+        """Write everything to datafile.
 
-        mode = 'a' if append else 'w'
-        with open('test.dat', mode) as fobj:
-            self.data.tofile(fobj)
+        """
+        self.data.tofile(filename)
+
+    def flush(self, file_object, nr=-1):
+        """Flush signal to file.
+
+        """
+        self.data[:nr].tofile(file_object)
+        self.data = np.array(self.data[nr:], dtype=self._dlevel)
 
 
 class SignalFile(object):
