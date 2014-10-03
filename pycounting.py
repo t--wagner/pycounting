@@ -5,9 +5,13 @@ import numpy as np
 from collections import defaultdict
 from scipy.optimize import curve_fit
 import glob
+import matplotlib.pyplot as plt
 
 
-def filelist(pathname):
+def list_files(pathname):
+    """List all filenames in path.
+
+    """
     files = glob.glob(pathname)
     files.sort()
     return files
@@ -23,7 +27,7 @@ class Trace(object):
         if isinstance(files, (list, tuple)):
             self._files = list(files)
         else:
-            self._files = filelist(files)
+            self._files = list_files(files)
 
         # Open all datafiles in readable binary mode
         self._fileobjs = []
@@ -87,7 +91,7 @@ class Trace(object):
             self.position = int(start)
 
             # Return window
-            return self._next_window(stop - start)[::step]
+            return self.next(stop - start)[::step]
         elif isinstance(key, int):
             self.position = key
             return self.next()
@@ -185,15 +189,7 @@ class Trace(object):
         file_position = datapoint_nr * self._datapointsize
         self._fileobj.seek(file_position, 0)
 
-    def next(self):
-        """Return next datapoint of trace.
-
-        """
-
-        datapoint, = self._next_window(1)
-        return datapoint
-
-    def _next_window(self, length):
+    def next(self, length=1):
         """Return np.array with next datapoints of trace.
 
         """
@@ -230,24 +226,39 @@ class Trace(object):
         if nr is not None:
             # Window number defined
             for nr in xrange(nr):
-                yield self._next_window(length)
+                yield self.next(length)
         else:
             # Stop position defined
             while self.position + length < stop:
-                yield self._next_window(length)
+                yield self.next(length)
+
+    def plot(self, start, stop, step=1, ax=None, **kwargs):
+
+        if not ax:
+            ax = plt.gca()
+
+        x = np.arange(start, stop, step)
+        y = self.__getitem__(slice(start, stop, step))
+        line, = ax.plot(x, y)
+
+        return line
 
 
 class Signal(object):
 
-    def __init__(self, data=None, load=None, start=0):
+    def __init__(self, data=None, start=0):
 
         # Define signals numpy datatype
         self._dlevel = np.dtype([('state', np.int16),
                                  ('length', np.int64),
                                  ('value', np.float64)])
 
-        if data is None:
+        if isinstance(data, str):
+            data = np.fromfile(data, dtype=self._dlevel)
+        elif data is None:
             data = [(-1, 0, 0)]
+
+        print data
 
         self.data = np.array(data, dtype=self._dlevel)
         self.start = start
@@ -267,6 +278,10 @@ class Signal(object):
         """
         new_data = np.array(levels, dtype=self._dlevel)
         self.data = np.concatenate((self.data, new_data))
+
+    def range(self, start, stop):
+        index = (self.position >= start) & (self.position < stop)
+        return self.position[index], self.data[index]
 
     @property
     def position(self):
@@ -308,15 +323,25 @@ class Signal(object):
         """
         self.data.tofile(filename)
 
-    def flush(self, file_object, nr=-1):
+    def flush(self, fobj, nr=-1):
         """Flush signal to file.
 
         """
-        self.data[:nr].tofile(file_object)
+        self.data[:nr].tofile(fobj)
         self.data = np.array(self.data[nr:], dtype=self._dlevel)
 
+    def plot(self, start, stop, ax=None, **kwargs):
 
-class SignalFile(object):
+        if not ax:
+            ax = plt.gca()
+
+        x, y = self.range(start, stop)
+        line, = ax.step(x, y['value'], **kwargs)
+
+        return line
+
+
+class SignalStream(object):
     """Handel FCSignal files.
 
     """
@@ -500,8 +525,35 @@ class System(object):
         return len(self._levels)
 
     @property
+    def abs(self):
+        values = []
+        for level in self._levels:
+            values += level.abs
+        return values
+
+    @property
+    def rel(self):
+        values = []
+        for level in self._levels:
+            values += level.rel
+        return values
+
+    @property
     def nr_of_levels(self):
         return self.__len__()
+
+    def plot(self, ax=None, **kwargs):
+
+        if not ax:
+            ax = plt.gca()
+        else:
+            plt.sca(ax)
+
+        lines = []
+        for value in self.abs:
+            lines.append(plt.axhline(value, **kwargs))
+
+        return lines
 
 
 class Histogram(object):
@@ -554,6 +606,45 @@ class Histogram(object):
     def values_n(self):
         """Return pair of bins and normed frequencies."""
         return self.bins, self.freqs_n
+
+    def plot(self, ax=None, normed=True, inverted=False, **kwargs):
+
+        if not ax:
+            ax = plt.gca()
+
+        y = self.freqs if not normed else self.freqs_n
+
+        if not inverted:
+            line, = ax.plot(self.bins, y, **kwargs)
+        else:
+            line, = ax.plot(y, self.bins, **kwargs)
+
+        return line
+
+
+class Time(Histogram):
+
+    def __init__(self, state, signal, bins, range):
+
+        self._state = state
+
+        # Get all times of state from signal
+        times = signal['length'][signal.state == self._state]
+        Histogram.__init__(self, times, bins, range)
+
+    def add(self, signal):
+        times = signal['length'][signal.state == self._state]
+        Histogram.add(self, times)
+
+    def plot(self, ax=None, normed=True, log=True, **kwargs):
+        line = Histogram.plot(self, ax, normed, False, **kwargs)
+
+        if log:
+            plt.yscale('log')
+
+        return line
+
+
 
 
 class PyHistogram(object):
@@ -614,32 +705,6 @@ class PyHistogram(object):
         return self.freqs / float(self.elements)
 
 
-class Times(object):
-
-    def __init__(self):
-        self._times = {}
-
-    def __getitem__(self, key):
-        return self._times[key]
-
-    def add(self, signal):
-
-        # Iterate over all signals
-        for level in signal:
-
-            state = level[0]
-            length = level[1]
-
-            try:
-                histo = self._times[state]
-            except KeyError:
-                histo = Histogram()
-                self._times[state] = histo
-
-            # Update date time distribution dictonary
-            histo.add_datapoint(length, 1)
-
-
 class Fit(object):
 
     def __init__(self, function, xdata, ydata, start_parameters):
@@ -665,6 +730,21 @@ class Fit(object):
     @property
     def error(self):
         return self._error
+
+    def plot(self, x, ax=None, inverted=False, **kwargs):
+        """Plot the fit function for x.
+
+        """
+
+        if not ax:
+            ax = plt.gca()
+
+        if not inverted:
+            line, = ax.plot(x, self.__call__(x), **kwargs)
+        else:
+            line, = ax.plot(self.__call__(x), x, **kwargs)
+
+        return line
 
 
 def flinear(x, m=1, y0=0):
