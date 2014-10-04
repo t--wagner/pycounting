@@ -2,14 +2,53 @@
 
 from os.path import getsize
 import numpy as np
-from collections import defaultdict
 from scipy.optimize import curve_fit
 import glob
 import matplotlib.pyplot as plt
+from cdetector import digitize as _digitize
 
 
-def list_files(pathname):
-    """List all filenames in path.
+def tc(sampling_rate, timestr='s'):
+    """Returns the time constant based on the sampling rate and timestr.
+
+    timestr: 'us', 'ms', 's', 'm', 'h', 'd'
+    """
+
+    sampling_rate = int(sampling_rate)
+
+    if timestr == 'us':
+        time_constant = sampling_rate / 1e6
+    elif timestr == 'ms':
+        time_constant = sampling_rate / 1e3
+    elif timestr == 's':
+        time_constant = sampling_rate
+    elif timestr == 'm':
+        time_constant = sampling_rate * 60
+    elif timestr == 'h':
+        time_constant = sampling_rate * 60 * 60
+    elif timestr == 'd':
+        time_constant = sampling_rate * 60 * 60 * 24
+    else:
+        raise ValueError('timestr is wrong.')
+
+    return float(time_constant)
+
+
+def dtr(values, bits=16, min=-10, max=10):
+    """Calculate real absolut values from dwords.
+
+    """
+
+    # Get the number of steps out of bits
+    steps = 2 ** bits - 1
+
+    # Process the data values and return numpy array
+    values = [value * (max - min) / float((steps)) + min for value in values]
+    return np.array(values)
+
+
+def list_filenames(pathname):
+    """List of sorted filenames in path, based on pattern.
 
     """
     files = glob.glob(pathname)
@@ -27,7 +66,7 @@ class Trace(object):
         if isinstance(files, (list, tuple)):
             self._files = list(files)
         else:
-            self._files = list_files(files)
+            self._files = list_filenames(files)
 
         # Open all datafiles in readable binary mode
         self._fileobjs = []
@@ -244,6 +283,83 @@ class Trace(object):
         return line
 
 
+class Detector(object):
+
+    def __init__(self, system=None, average=1, nsigma=2, buffer=None):
+
+        self.system = system
+        self.average = average
+        self.nsigma = nsigma
+        self.buffer = buffer
+
+    def digitize(self, data, signal):
+        """Digitize the the input data and store it in signal.
+
+        """
+
+        # Put buffer infront of input data
+        try:
+            data = np.concatenate([self.buffer, data])
+        except ValueError:
+            pass
+
+        # Get the last signal and store it in new signal
+        new_signal = [signal[-1]]
+
+        # Get the boundaries of the levels
+        low0, high0, low1, high1 = self.abs
+
+        # CYTHON: Digitize the data
+        self.buffer = _digitize(data, new_signal, int(self.average),
+                                low0, high0, low1, high1)
+
+        # Update values of the last level in signal
+        signal.data[-1] = new_signal[0]
+
+        # Append new_signal to signal
+        signal.append(new_signal[1:])
+
+    @property
+    def abs(self):
+        """List of absolute boundarie values.
+
+        The values are calculted from the level values with nsigma.
+        """
+
+        abs = []
+        for level in self.system:
+            low = level.center - level.sigma * self.nsigma
+            high = level.center + level.sigma * self.nsigma
+            abs += [low, high]
+        return abs
+
+    @property
+    def rel(self):
+        """List of absolute boundarie values.
+
+        The values are calculted from the system levels with nsigma.
+        """
+
+        rel = []
+        for level in self.system:
+            rel += [level.center, level.sigma * self.nsigma]
+        return rel
+
+    def clear(self):
+        """Clear the buffer.
+
+        """
+        self.buffer = None
+
+    def plot(self, ax=None, **kwargs):
+
+        if not ax:
+            ax = plt.gca()
+
+        lines = [plt.axhline(value, **kwargs) for value in self.abs]
+        return lines
+
+
 class Signal(object):
 
     def __init__(self, data=None, start=0):
@@ -257,8 +373,6 @@ class Signal(object):
             data = np.fromfile(data, dtype=self._dlevel)
         elif data is None:
             data = [(-1, 0, 0)]
-
-        print data
 
         self.data = np.array(data, dtype=self._dlevel)
         self.start = start
@@ -504,6 +618,18 @@ class Level(object):
     def abs(self):
         return (self.low, self.high)
 
+    def plot(self, ax=None, **kwargs):
+
+        if not ax:
+            ax = plt.gca()
+        else:
+            plt.sca(ax)
+
+        lines = [plt.axhline(self.low, **kwargs),
+                 plt.axhline(self.high, **kwargs)]
+
+        return lines
+
 
 class System(object):
 
@@ -550,22 +676,31 @@ class System(object):
             plt.sca(ax)
 
         lines = []
-        for value in self.abs:
-            lines.append(plt.axhline(value, **kwargs))
+        for level in self._levels:
+            lines += level.plot(ax, **kwargs)
 
         return lines
 
 
 class Histogram(object):
 
-    def __init__(self, data, bins=1000, range=None):
-        self._freqs, self._bins = np.histogram(data, bins, range)
+    def __init__(self, data=None, bins=1000, width=None):
+        if data is not None:
+            self._freqs, self._bins = np.histogram(data, bins, width)
+        else:
+            self._freqs = None
+            self._bins = bins
+            self._width = width
 
     def add(self, data):
         """Add data to the histogram.
 
         """
-        self._freqs += np.histogram(data, self._bins)[0]
+        try:
+            self._freqs += np.histogram(data, self._bins)[0]
+        except TypeError:
+            self._freqs, self._bins = np.histogram(data, self._bins,
+                                                   self._width)
 
     @property
     def elements(self):
@@ -624,13 +759,19 @@ class Histogram(object):
 
 class Time(Histogram):
 
-    def __init__(self, state, signal, bins, range):
+    def __init__(self, state, signal=None, bins=1000, width=None):
 
         self._state = state
 
+        if not width:
+            width = (0, bins)
+
         # Get all times of state from signal
-        times = signal['length'][signal.state == self._state]
-        Histogram.__init__(self, times, bins, range)
+        if signal is not None:
+            times = signal['length'][signal.state == self._state]
+            Histogram.__init__(self, times, bins, width)
+        else:
+            Histogram.__init__(self, bins=bins, width=width)
 
     def add(self, signal):
         times = signal['length'][signal.state == self._state]
@@ -645,64 +786,38 @@ class Time(Histogram):
         return line
 
 
+class TimeDict(object):
 
+    def __init__(self, states, signal=None, bins=1000, width=None):
 
-class PyHistogram(object):
+        if states is None:
+            states = []
+        if isinstance(states, System):
+            states = range(len(states))
 
-    def __init__(self, datapoints=[]):
-        self.comment = ''
-        self._elements = 0
-        self._histo = defaultdict(int)
+        self._times = {state: Time(state, signal, bins, width)
+                       for state in states}
 
-        self.add(datapoints)
-
-    def __getitem__(self, bin):
-        return self._histo[bin]
-
-    @property
-    def elements(self):
-        """Return number of elements in histogram.
-
-        """
-        return self._elements
-
-    def add_datapoint(self, bin, freq=1):
-        """Add freq to bin.
-
-        """
-        self._histo[bin] += freq
-        self._elements += freq
-
-    def add(self, datapoints):
-
-        # Try to iterate over data
-        try:
-            for datapoint in datapoints:
-                self._histo[datapoint] += 1
-                self._elements += 1
-        # If not iteratable just insert
-        except TypeError:
-            self.add_datapoint(datapoints)
+    def __getitem__(self, key):
+        return self._times
 
     @property
-    def bins(self):
-        bins = np.array(self._histo.keys())
-        return bins
+    def states(self):
+        return self._times.keys()
 
     @property
-    def freqs(self):
-        """Return frequencies.
+    def values(self):
+        return self._times.values()
 
-        """
-        freqs = np.array(self._histo.values())
-        return freqs
+    def add(self, signal):
+        for time in self._times.values():
+            time.add(signal)
 
-    @property
-    def freqs_n(self):
-        """Return normed frequencies.
+    def plot(self, ax=None, normed=True, log=True, **kwargs):
 
-        """
-        return self.freqs / float(self.elements)
+        lines = [time.plot(ax=None, normed=True, log=True, **kwargs)
+                 for time in self._times.values()]
+        return lines
 
 
 class Fit(object):
@@ -824,174 +939,3 @@ def fit_levels(data, start_parameters):
                     for i in xrange(0, len(levels), 2)])
 
     return system, fit, histo
-
-
-def fit_trace(windows, start_parameters, fitfile=None):
-    fit_parameters = []
-
-    for window in windows:
-        levels, fit, histogram = fit_levels(window, start_parameters)
-        fit_parameters.append(tuple(fit.parameters))
-        start_parameters = fit.parameters
-
-    # Write data to fitfile
-    if fitfile:
-        try:
-            fobj = open(fitfile)
-        except TypeError:
-            pass
-
-    return fit_parameters
-
-
-def read_fitfile(fitfile):
-    """Read the fitting parameters file created by the fit_levels fucntion.
-
-    """
-
-    # Create list to store the fit parameters
-    fit_parameters = []
-
-    # Open fitfile
-    with open(fitfile) as fobj:
-
-        # Read all data
-        for line in fobj:
-            # Make a list from line
-            line = line.replace('\n', '').replace(' ', '').split(',')
-
-            # Turn all values to float
-            line = [float(value) for value in line]
-
-            # Add line to parameter list
-            fit_parameters.append(line)
-
-    # Transpose the parameters and return numpy array
-    return np.transpose(fit_parameters)
-
-
-def tc(sampling_rate, timestr='s'):
-    """Returns the time constant based on the sampling rate and timestr.
-
-    timestr: 'us', 'ms', 's', 'm', 'h', 'd'
-    """
-
-    sampling_rate = int(sampling_rate)
-
-    if timestr == 'us':
-        time_constant = sampling_rate / 1e6
-    elif timestr == 'ms':
-        time_constant = sampling_rate / 1e3
-    elif timestr == 's':
-        time_constant = sampling_rate
-    elif timestr == 'm':
-        time_constant = sampling_rate * 60
-    elif timestr == 'h':
-        time_constant = sampling_rate * 60 * 60
-    elif timestr == 'd':
-        time_constant = sampling_rate * 60 * 60 * 24
-    else:
-        raise ValueError('timestr is wrong.')
-
-    return float(time_constant)
-
-
-def dtr(values, bits=16, min=-10, max=10):
-
-    # Get the number of steps out of bits
-    steps = 2 ** bits - 1
-
-    # Process the data values and return numpy array
-    values = [value * (max - min) / float((steps)) + min for value in values]
-    return np.array(values)
-
-
-def create_histogram(data, normed=True, comment=''):
-    """Create a histogram out of a data list.
-
-    """
-
-    # Create histogram instance
-    histogram = PyHistogram()
-
-    # Make numpy array out of data
-    data = np.array(data)
-
-    # Create histogram
-    nr_of_bins = data.max() - data.min()
-    elements, bins = np.histogram(data, nr_of_bins, normed=normed)
-
-    histogram.elements = sum(elements)
-    histogram.comment = comment
-    histogram.data = np.array([bins[:-1], elements])
-    return histogram
-
-
-def read_histogram(histogram_file):
-
-    histograms = []
-
-    bins = []
-    items = []
-
-    with open(histogram_file, 'r') as histoobj:
-
-        section = None
-
-        for line in histoobj:
-
-            # Remove trailing characters and whitespaces at line end
-            line = line.rstrip()
-
-            # Detect the section
-            try:
-                if (line[0] == '<' and line[-1] == '>'):
-                    section = line[1:-1]
-
-                    # Read section data
-                    if section == 'fchistogram':
-                        histograms.append(PyHistogram())
-                        del bins[:]
-                        del items[:]
-                    elif section == '/fchistogram':
-                        histograms[-1].data = np.array([bins, items])
-                        section = None
-                    elif section == '/elements':
-                        section = None
-                    elif section == '/comment':
-                        section = None
-                    elif section == '/data':
-                        section = None
-                    continue
-            except:
-                pass
-
-            if section == 'elements':
-                histograms[-1].elements = int(line)
-            elif section == 'comment':
-                histograms[-1].comment += line
-            elif section == 'data':
-                line = line.replace(' ', '').split(';')
-                bins.append(float(line[0]))
-                items.append(int(line[1]))
-
-    return histograms
-
-
-def read_cummulants(cummulants_file):
-    """Read the cummulants from file.
-
-    """
-
-    data = []
-
-    with open(cummulants_file, 'r') as cummulants_fobj:
-
-        for line in cummulants_fobj:
-            line = line.rstrip().rstrip(';')
-            line = line.split(';')
-            line = [float(cummulant) for cummulant in line]
-
-            data.append(line)
-
-    return np.transpose(data)

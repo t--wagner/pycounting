@@ -1,7 +1,5 @@
-%%cython
 import numpy as np
 cimport numpy as np
-
 
 # Declare fused type to use are generic datatype
 ctypedef fused datatype:
@@ -11,19 +9,11 @@ ctypedef fused datatype:
     float
     double
 
-
-# Take 1d numpy arrays
 def digitize(np.ndarray[datatype, ndim=1] trace,
              signal,
              int average,
-             double center_0, double width_0,
-             double center_1, double width_1):
-
-    #Calculate levels
-    cdef double limit0_down = center_0 - width_0
-    cdef double limit0_up = center_0 + width_0
-    cdef double limit1_down = center_1 - width_1
-    cdef double limit1_up = center_1 + width_1
+             double limit0_down, double limit0_up,
+             double limit1_down, double limit1_up):
 
     # Datapoint variables
     cdef datatype datapoint
@@ -32,9 +22,11 @@ def digitize(np.ndarray[datatype, ndim=1] trace,
     # Level variables
     cdef int  level_state
     cdef long level_length
-    cdef datatype level_value
+    cdef double level_value
 
+    # Get the values from the last level as starting position
     level_state, level_length, level_value = signal[-1]
+    del signal[-1]
 
     # Iterate through array by c stlye indexing. Keep always enough points for averraging.
     cdef unsigned long i
@@ -55,7 +47,7 @@ def digitize(np.ndarray[datatype, ndim=1] trace,
         # Compare current and last state
         if datapoint_state == level_state:
             # State did not change
-            level_value += (datapoint - level_value) / level_length;
+            level_value = (1 - 1 / <float>level_length) * level_value + datapoint / <float>level_length
         elif datapoint_state == -1:
             # Current state is undefined
             pass
@@ -67,6 +59,9 @@ def digitize(np.ndarray[datatype, ndim=1] trace,
             level_state  = datapoint_state
             level_length = 0
             level_value  = datapoint
+
+    #Append the unfinished levels
+    signal.append((level_state, level_length, level_value))
 
     # Return the buffer that is necassary to buffer
     return trace[-average:].copy()
