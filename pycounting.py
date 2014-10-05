@@ -6,6 +6,7 @@ from scipy.optimize import curve_fit
 import glob
 import matplotlib.pyplot as plt
 from cdetector import digitize as _digitize
+from itertools import product
 
 
 def tc(sampling_rate, timestr='s'):
@@ -285,11 +286,20 @@ class Trace(object):
 
 class Detector(object):
 
-    def __init__(self, system=None, average=1, nsigma=2, buffer=None):
+    def __init__(self, average=1, nsigma=2, system=None, buffer=None):
 
         self.system = system
-        self.average = average
-        self.nsigma = nsigma
+
+        if isinstance(average, int):
+            self.average = average
+        else:
+            raise TypeError('average must be int')
+
+        if isinstance(nsigma, (int, float)):
+            self.nsigma = nsigma
+        else:
+            raise TypeError('nsigma must be int or foat')
+
         self.buffer = buffer
 
     def digitize(self, data, signal):
@@ -358,6 +368,61 @@ class Detector(object):
 
         lines = [plt.axhline(value, **kwargs) for value in self.abs]
         return lines
+
+
+class MultiDetector(object):
+
+    def __init__(self, detectors):
+
+        self.detectors = detectors
+
+    def __getitem__(self, key):
+        return self.detectors[key]
+
+    def __iter__(self):
+        return iter(self.detectors)
+
+    def __len__(self):
+        return len(self.detectors)
+
+    @property
+    def system(self):
+        return [detector.system for detector in self.detectors]
+
+    @system.setter
+    def system(self, system):
+        for detector in self.detectors:
+            detector.system = system
+
+    @property
+    def abs(self):
+        return [detector.abs for detector in self.detectors]
+
+    @property
+    def rel(self):
+        return [detector.rel for detector in self.detectors]
+
+    def digitize(self, data, signal):
+        for detector in self.detectors:
+            detector.digitize(data, signal)
+
+    def clear(self):
+        for detector in self.detectors:
+            detector.clear()
+
+    def plot(self, ax=None, **kwargs):
+
+        lines = [detector.plot(ax, **kwargs) for detector in self.detectors]
+        return lines
+
+
+def pdetector(average=[1], nsigma=[2], system=[None], factor=1):
+    """Create detector list of with cartesian product of attributes.
+
+    """
+    return [Detector(*values)
+            for i in range(factor)
+            for values in product(average, nsigma, system)]
 
 
 class Signal(object):
@@ -437,11 +502,12 @@ class Signal(object):
         """
         self.data.tofile(filename)
 
-    def flush(self, fobj, nr=-1):
+    def flush(self, fobj=None, nr=-1):
         """Flush signal to file.
 
         """
-        self.data[:nr].tofile(fobj)
+        if fobj:
+            self.data[:nr].tofile(fobj)
         self.data = np.array(self.data[nr:], dtype=self._dlevel)
 
     def plot(self, start, stop, ax=None, **kwargs):
@@ -684,7 +750,7 @@ class System(object):
 
 class Histogram(object):
 
-    def __init__(self, data=None, bins=1000, width=None):
+    def __init__(self, bins=1000, width=None, data=None):
         if data is not None:
             self._freqs, self._bins = np.histogram(data, bins, width)
         else:
@@ -759,22 +825,22 @@ class Histogram(object):
 
 class Time(Histogram):
 
-    def __init__(self, state, signal=None, bins=1000, width=None):
+    def __init__(self, state, bins=1000, width=None, signal=None):
 
-        self._state = state
+        self.state = state
 
         if not width:
             width = (0, bins)
 
         # Get all times of state from signal
         if signal is not None:
-            times = signal['length'][signal.state == self._state]
-            Histogram.__init__(self, times, bins, width)
+            times = signal['length'][signal.state == self.state]
+            Histogram.__init__(self, bins, width, times)
         else:
             Histogram.__init__(self, bins=bins, width=width)
 
     def add(self, signal):
-        times = signal['length'][signal.state == self._state]
+        times = signal['length'][signal.state == self.state]
         Histogram.add(self, times)
 
     def plot(self, ax=None, normed=True, log=True, **kwargs):
@@ -786,38 +852,36 @@ class Time(Histogram):
         return line
 
 
-class TimeDict(object):
+class MultiTime(object):
 
-    def __init__(self, states, signal=None, bins=1000, width=None):
-
-        if states is None:
-            states = []
-        if isinstance(states, System):
-            states = range(len(states))
-
-        self._times = {state: Time(state, signal, bins, width)
-                       for state in states}
+    def __init__(self, times):
+        self.times = times
 
     def __getitem__(self, key):
-        return self._times
+        return self.times[key]
 
-    @property
-    def states(self):
-        return self._times.keys()
-
-    @property
-    def values(self):
-        return self._times.values()
+    def __iter__(self):
+        return iter(self.times)
 
     def add(self, signal):
-        for time in self._times.values():
+        for time in self.times:
             time.add(signal)
 
     def plot(self, ax=None, normed=True, log=True, **kwargs):
 
-        lines = [time.plot(ax=None, normed=True, log=True, **kwargs)
-                 for time in self._times.values()]
+        lines = [time.plot(ax, normed, log, **kwargs)
+                 for time in self.times]
         return lines
+
+
+def ptime(state, bin=[1000], width=[None], signal=[None], factor=1):
+    """Create time list of with cartesian product of attributes.
+
+    """
+
+    return [Time(*values)
+            for i in range(factor)
+            for values in product(state, bin, width, signal)]
 
 
 class Fit(object):
@@ -929,7 +993,7 @@ def fit_levels(data, start_parameters):
     """
 
     # Create histogram and filter everything
-    histo = Histogram(data)
+    histo = Histogram(data=data)
     fit = Fit(flevels, histo.bins, histo.freqs_n, start_parameters)
 
     # Filter levels=(mu_0, sigma_0, ..., mu_N, sigma_N)
