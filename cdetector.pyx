@@ -3,6 +3,7 @@ cimport numpy as np
 
 # Declare fused type to use are generic datatype
 ctypedef fused datatype:
+    unsigned short
     short
     int
     long

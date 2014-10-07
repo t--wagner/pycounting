@@ -83,7 +83,7 @@ class Trace(object):
         if self._datatype in ['int', 'int32']:
             self._dtype = np.dtype(np.int32)
         elif self._datatype == 'ushort':
-            self._dtype = ''
+            self._dtype = np.dtype(np.ushort)
         else:
             raise TypeError('Unsupported datatype')
 
@@ -403,7 +403,8 @@ class MultiDetector(object):
         return [detector.rel for detector in self.detectors]
 
     def digitize(self, data, signal):
-        for detector in self.detectors:
+
+        for detector, signal in zip(self.detectors, signal):
             detector.digitize(data, signal)
 
     def clear(self):
@@ -724,7 +725,7 @@ class System(object):
         return values
 
     @property
-    def rel(self):
+    def brel(self):
         values = []
         for level in self._levels:
             values += level.rel
@@ -860,12 +861,19 @@ class MultiTime(object):
     def __getitem__(self, key):
         return self.times[key]
 
+    def __len__(self):
+        return len(self.times)
+
     def __iter__(self):
         return iter(self.times)
 
     def add(self, signal):
-        for time in self.times:
-            time.add(signal)
+        try:
+            for time, signal in zip(self.times, signal):
+                time.add(signal)
+        except TypeError:
+            for time in self.times:
+                time.add(signal)
 
     def plot(self, ax=None, normed=True, log=True, **kwargs):
 
