@@ -53,8 +53,7 @@ def list_filenames(pathname):
 
     """
     files = glob.glob(pathname)
-    files.sort()
-    return files
+    return sorted(files)
 
 
 class Trace(object):
@@ -158,13 +157,15 @@ class Trace(object):
 
         """
         if unit == 'gb':
-            divider = 1024 * 1024
+            divider = 1024 * 1024 * 1024
         elif unit == 'mb':
-            divider == 1024
+            divider = 1024 * 1024
         elif unit == 'kb':
+            divider = 1024
+        elif unit == 'b':
             divider = 1
 
-        return self._datasize / float(1024)
+        return self._datasize / float(divider)
 
     @property
     def datatype(self):
@@ -288,7 +289,7 @@ class Detector(object):
 
     def __init__(self, average=1, nsigma=2, system=None, buffer=None):
 
-        self.system = system
+        self._system = system
 
         if isinstance(average, int):
             self.average = average
@@ -300,7 +301,23 @@ class Detector(object):
         else:
             raise TypeError('nsigma must be int or foat')
 
-        self.buffer = buffer
+        self._buffer = buffer
+
+    @property
+    def system(self):
+        return self._system
+
+    @system.setter
+    def system(self, system):
+        self._system = system
+
+    @property
+    def buffer(self):
+        return self._buffer
+
+    @buffer.setter
+    def buffer(self, buffer):
+        self._buffer = buffer
 
     def digitize(self, data, signal):
         """Digitize the the input data and store it in signal.
@@ -309,7 +326,7 @@ class Detector(object):
 
         # Put buffer infront of input data
         try:
-            data = np.concatenate([self.buffer, data])
+            data = np.concatenate([self._buffer, data])
         except ValueError:
             pass
 
@@ -320,8 +337,8 @@ class Detector(object):
         low0, high0, low1, high1 = self.abs
 
         # CYTHON: Digitize the data
-        self.buffer = _digitize(data, new_signal, int(self.average),
-                                low0, high0, low1, high1)
+        self._buffer = _digitize(data, new_signal, int(self.average),
+                                 low0, high0, low1, high1)
 
         # Update values of the last level in signal
         signal.data[-1] = new_signal[0]
@@ -337,7 +354,7 @@ class Detector(object):
         """
 
         abs = []
-        for level in self.system:
+        for level in self._system:
             low = level.center - level.sigma * self.nsigma
             high = level.center + level.sigma * self.nsigma
             abs += [low, high]
@@ -351,7 +368,7 @@ class Detector(object):
         """
 
         rel = []
-        for level in self.system:
+        for level in self._system:
             rel += [level.center, level.sigma * self.nsigma]
         return rel
 
@@ -359,7 +376,7 @@ class Detector(object):
         """Clear the buffer.
 
         """
-        self.buffer = None
+        self._buffer = None
 
     def plot(self, ax=None, **kwargs):
 
@@ -368,62 +385,6 @@ class Detector(object):
 
         lines = [plt.axhline(value, **kwargs) for value in self.abs]
         return lines
-
-
-class MultiDetector(object):
-
-    def __init__(self, detectors):
-
-        self.detectors = detectors
-
-    def __getitem__(self, key):
-        return self.detectors[key]
-
-    def __iter__(self):
-        return iter(self.detectors)
-
-    def __len__(self):
-        return len(self.detectors)
-
-    @property
-    def system(self):
-        return [detector.system for detector in self.detectors]
-
-    @system.setter
-    def system(self, system):
-        for detector in self.detectors:
-            detector.system = system
-
-    @property
-    def abs(self):
-        return [detector.abs for detector in self.detectors]
-
-    @property
-    def rel(self):
-        return [detector.rel for detector in self.detectors]
-
-    def digitize(self, data, signal):
-
-        for detector, signal in zip(self.detectors, signal):
-            detector.digitize(data, signal)
-
-    def clear(self):
-        for detector in self.detectors:
-            detector.clear()
-
-    def plot(self, ax=None, **kwargs):
-
-        lines = [detector.plot(ax, **kwargs) for detector in self.detectors]
-        return lines
-
-
-def pdetector(average=[1], nsigma=[2], system=[None], factor=1):
-    """Create detector list of with cartesian product of attributes.
-
-    """
-    return [Detector(*values)
-            for i in range(factor)
-            for values in product(average, nsigma, system)]
 
 
 class Signal(object):
@@ -440,76 +401,84 @@ class Signal(object):
         elif data is None:
             data = [(-1, 0, 0)]
 
-        self.data = np.array(data, dtype=self._dlevel)
-        self.start = start
+        self._data = np.array(data, dtype=self._dlevel)
+        self._start = start
 
     def __repr__(self):
-        return repr(self.data)
+        return repr(self._data)
 
     def __getitem__(self, key):
-        return self.data[key]
+        return self._data[key]
 
     def __len__(self):
-        return self.data.size
+        return self._data.size
+
+    @property
+    def data(self):
+        return self._data
+
+    @property
+    def start(self):
+        return self._start
 
     def append(self, levels):
         """Append new list of levels to signal.
 
         """
         new_data = np.array(levels, dtype=self._dlevel)
-        self.data = np.concatenate((self.data, new_data))
+        self._data = np.concatenate((self._data, new_data))
 
     def range(self, start, stop):
         index = (self.position >= start) & (self.position < stop)
-        return self.position[index], self.data[index]
+        return self.position[index], self._data[index]
 
     @property
     def position(self):
         """Position array of signal.
 
         """
-        return self.start + np.cumsum(self.data['length'])
+        return self._start + np.cumsum(self._data['length'])
 
     @property
     def state(self):
         """Sate array of signal.
 
         """
-        return self.data['state']
+        return self._data['state']
 
     @property
     def length(self):
         """Length array of signal.
 
         """
-        return self.data['length']
+        return self._data['length']
 
     @property
     def value(self):
         """Value array of signal.
 
         """
-        return self.data['value']
+        return self._data['value']
 
     @property
     def mean(self):
         """Mean value of signal.
         """
-        return self.data['value'].mean()
+        return self._data['value'].mean()
 
     def save(self, filename):
         """Write everything to datafile.
 
         """
-        self.data.tofile(filename)
+        self._data.tofile(filename)
 
     def flush(self, fobj=None, nr=-1):
         """Flush signal to file.
 
         """
         if fobj:
-            self.data[:nr].tofile(fobj)
-        self.data = np.array(self.data[nr:], dtype=self._dlevel)
+            self._data[:nr].tofile(fobj)
+        self._data = np.array(self._data[nr:], dtype=self._dlevel)
 
     def plot(self, start, stop, ax=None, **kwargs):
 
@@ -725,7 +694,7 @@ class System(object):
         return values
 
     @property
-    def brel(self):
+    def rel(self):
         values = []
         for level in self._levels:
             values += level.rel
@@ -768,6 +737,24 @@ class Histogram(object):
         except TypeError:
             self._freqs, self._bins = np.histogram(data, self._bins,
                                                    self._width)
+
+    @property
+    def mean(self):
+        """Calculate mean value of histogram.
+
+        """
+        return np.sum(self.freqs * self.bins) / float(self.elements)
+
+    @property
+    def max_freq(self):
+        """Return maximum of histogram.
+
+        """
+        return self.freqs.max()
+
+    @property
+    def max_freq_n(self):
+        return self.freqs_n.max()
 
     @property
     def elements(self):
@@ -828,23 +815,64 @@ class Time(Histogram):
 
     def __init__(self, state, bins=1000, width=None, signal=None):
 
-        self.state = state
+        self._state = state
 
         if not width:
             width = (0, bins)
 
         # Get all times of state from signal
         if signal is not None:
-            times = signal['length'][signal.state == self.state]
+            times = signal['length'][signal.state == self._state]
             Histogram.__init__(self, bins, width, times)
         else:
             Histogram.__init__(self, bins=bins, width=width)
 
+    @property
+    def state(self):
+        return self._state
+
+    @state.setter
+    def state(self, state):
+        return self._state
+
     def add(self, signal):
-        times = signal['length'][signal.state == self.state]
+        """Add time to signal.
+
+        """
+        times = signal['length'][signal.state == self._state]
         Histogram.add(self, times)
 
+    def fit_exp(self, a=None, rate=None, normed=True):
+        """Fit the time Histogram with an exponential function.
+
+        """
+        if rate is None:
+            rate = -1 * self.mean
+
+        if normed:
+            if a is None:
+                a = self.max_freq_n
+            freqs = self.freqs_n
+        else:
+            if a is None:
+                a = self.max_freq
+            freqs = self.freqs
+
+        fit = fit_exp(self.bins, freqs, a, rate)
+        fit.rate = np.abs(fit.parameters[-1])
+        return fit
+
+    @property
+    def rate(self):
+        """Rate extracted by the fit_exp method.
+
+        """
+        return np.abs(self.fit_exp().parameters[-1])
+
     def plot(self, ax=None, normed=True, log=True, **kwargs):
+        """Plot time distribution.
+
+        """
         line = Histogram.plot(self, ax, normed, False, **kwargs)
 
         if log:
@@ -853,43 +881,86 @@ class Time(Histogram):
         return line
 
 
-class MultiTime(object):
+def pdetector(average=[1], nsigma=[2], system=[None], factor=1):
+    """Create detector list of with cartesian product of attributes.
 
-    def __init__(self, times):
-        self.times = times
-
-    def __getitem__(self, key):
-        return self.times[key]
-
-    def __len__(self):
-        return len(self.times)
-
-    def __iter__(self):
-        return iter(self.times)
-
-    def add(self, signal):
-        try:
-            for time, signal in zip(self.times, signal):
-                time.add(signal)
-        except TypeError:
-            for time in self.times:
-                time.add(signal)
-
-    def plot(self, ax=None, normed=True, log=True, **kwargs):
-
-        lines = [time.plot(ax, normed, log, **kwargs)
-                 for time in self.times]
-        return lines
+    """
+    return [Detector(*values)
+            for i in range(factor)
+            for values in product(average, nsigma, system)]
 
 
-def ptime(state, bin=[1000], width=[None], signal=[None], factor=1):
+def ptime(state, bin=[1000], width=[None], signal=[None], nr=1):
     """Create time list of with cartesian product of attributes.
 
     """
-
     return [Time(*values)
-            for i in range(factor)
+            for i in range(nr)
             for values in product(state, bin, width, signal)]
+
+
+def psignal(data=[None], start=[0], nr=1):
+    """Create signal list with cartesian product of attributes.
+
+    """
+    return [Signal(*values)
+            for i in range(nr)
+            for values in product(data, start)]
+
+
+class CallableList(list):
+
+    def __init__(self, iterable):
+        list.__init__(self, iterable)
+
+    def __call__(self, *args, **kwargs):
+        return [item(*args, **kwargs) for item in self.__iter__()]
+
+
+class MultiBase(object):
+
+    def __init__(self, instances, cls):
+        # Avoid __setattr__ call
+        self.__dict__['_instances'] = instances
+        self.__dict__['_methods'] = dir(cls)
+
+    def __dir__(self):
+        return self._methods
+
+    def __iter__(self):
+        return iter(self._instances)
+
+    def __getattr__(self, name):
+        return CallableList([getattr(instance, name)
+                             for instance in self._instances])
+
+    def __setattr__(self, name, value):
+        for instance in self._instances:
+            setattr(instance, name, value)
+
+    def __len__(self):
+        return len(self._instances)
+
+    def __getitem__(self, key):
+        return self._instances[key]
+
+
+class MultiDetector(MultiBase):
+
+    def __init__(self, detectors):
+        MultiBase.__init__(self, instances=detectors, cls=Detector)
+
+
+class MultiSignal(MultiBase):
+
+    def __init__(self, signals):
+        MultiBase.__init__(self, instances=signals, cls=Signal)
+
+
+class MultiTime(MultiBase):
+
+    def __init__(self, times):
+        MultiBase.__init__(self, instances=times, cls=Time)
 
 
 class Fit(object):
@@ -949,14 +1020,14 @@ def fit_linear(xdata, ydata, m=1, y0=0):
     return Fit(flinear, xdata, ydata, (m, y0))
 
 
-def fexp(x, a=1, tau=1):
+def fexp(x, a=1, tau=-1):
     """Exponential function.
     """
     x = np.array(x, copy=False)
-    return a * np.exp(tau * x)
+    return a * np.exp(x / float(tau))
 
 
-def fit_exp(xdata, ydata, a=1, tau=1):
+def fit_exp(xdata, ydata, a=1, tau=-1):
     """Fit data with exponential function.
 
     """
