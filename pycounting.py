@@ -15,8 +15,6 @@ def tc(sampling_rate, timestr='s'):
     timestr: 'us', 'ms', 's', 'm', 'h', 'd'
     """
 
-    sampling_rate = int(sampling_rate)
-
     if timestr == 'us':
         time_constant = sampling_rate / 1e6
     elif timestr == 'ms':
@@ -961,6 +959,78 @@ class MultiTime(MultiBase):
 
     def __init__(self, times):
         MultiBase.__init__(self, instances=times, cls=Time)
+
+
+class FFT(object):
+
+    def __init__(self, data, samplerate=None):
+
+        data = np.array(data, copy=False)
+
+        if samplerate is None:
+            samplerate = 1
+
+        self._fft = np.fft.rfft(data)
+        self._freq = np.fft.rfftfreq(data.size, d=1/float(samplerate))
+        self._samples = data.size
+
+    @property
+    def freq(self):
+        return self._freq
+
+    @property
+    def abs(self):
+        return np.absolute(self._fft)
+
+    @property
+    def abs_n(self):
+        return self.abs / np.sqrt(self._samples)
+
+    @property
+    def real(self):
+        return np.real(self._fft)
+
+    @property
+    def real_n(self):
+        return self.real / float(self._samples)
+
+    @property
+    def imag(self):
+        return np.imag(self._fft)
+
+    @property
+    def imag_n(self):
+        return self.imag / float(self._samples)
+
+    @property
+    def angle(self):
+        return np.angle(self._fft)
+
+    @property
+    def power(self):
+        pass
+
+    def plot(self, ax=None, show='abs_n', range=(5e3, np.inf),
+             order=1e3):
+        """Plot the fft spectrum in rage.
+
+        """
+        if not ax:
+            ax = plt.gca()
+
+        # Get data
+        fft = self.__getattribute__(show)
+        freq = self._freq / float(order)
+
+        # Plot data range
+        index = (self.freq > range[0]) & (self.freq < range[1])
+        line, = ax.plot(freq[index], fft[index])
+
+        # Set axis label
+        ax.set_ylabel(show)
+        ax.set_xlabel('frequency / ' + str(order))
+
+        return line
 
 
 class Fit(object):
