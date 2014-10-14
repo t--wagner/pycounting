@@ -719,12 +719,12 @@ class System(object):
 class Histogram(object):
 
     def __init__(self, bins=1000, width=None, data=None):
-        if data is not None:
-            self._freqs, self._bins = np.histogram(data, bins, width)
-        else:
+        if data is None:
             self._freqs = None
             self._bins = bins
             self._width = width
+        else:
+            self._freqs, self._bins = np.histogram(data, bins, width)
 
     def add(self, data):
         """Add data to the histogram.
@@ -963,16 +963,36 @@ class MultiTime(MultiBase):
 
 class FFT(object):
 
-    def __init__(self, data, samplerate=None):
-
-        data = np.array(data, copy=False)
+    def __init__(self, data=None, samplerate=None):
 
         if samplerate is None:
-            samplerate = 1
+            self._samplerate = 1
+        else:
+            self._samplerate = samplerate
 
-        self._fft = np.fft.rfft(data)
-        self._freq = np.fft.rfftfreq(data.size, d=1/float(samplerate))
-        self._samples = data.size
+        if data is not None:
+            self.add(data)
+
+    def add(self, data):
+        data = np.array(data, copy=False)
+        fft = np.fft.rfft(data)
+        try:
+
+            self._fft += fft
+            self._samples += data.size
+        except AttributeError:
+            self._fft = fft
+            self._freq = np.fft.rfftfreq(data.size,
+                                         d=1/float(self._samplerate))
+            self._samples = data.size
+
+    @property
+    def samplerate(self):
+        return self._samplerate
+
+    @property
+    def samples(self):
+        return self._samples
 
     @property
     def freq(self):
@@ -1008,11 +1028,15 @@ class FFT(object):
 
     @property
     def power(self):
-        pass
+        return self.abs**2
+
+    @property
+    def power_n(self):
+        return self.abs_n**2
 
     def plot(self, ax=None, show='abs_n', range=(5e3, np.inf),
-             order=1e3):
-        """Plot the fft spectrum in rage.
+             order=1e3, log=False, **kwargs):
+        """Plot the fft spectrum in range.
 
         """
         if not ax:
@@ -1024,7 +1048,11 @@ class FFT(object):
 
         # Plot data range
         index = (self.freq > range[0]) & (self.freq < range[1])
-        line, = ax.plot(freq[index], fft[index])
+        line, = ax.plot(freq[index], fft[index], **kwargs)
+
+        # Log everything
+        if log:
+            ax.set_yscale('log')
 
         # Set axis label
         ax.set_ylabel(show)
