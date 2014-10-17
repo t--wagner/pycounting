@@ -59,7 +59,9 @@ class Trace(object):
 
     """
 
-    def __init__(self, files, datatype):
+    def __init__(self, files, datatype, samplerate):
+
+        self._samplerate = samplerate
 
         if isinstance(files, (list, tuple)):
             self._files = list(files)
@@ -122,6 +124,7 @@ class Trace(object):
             step = int(key.step) if key.step else 1
 
             # Handle negative positions
+            start = self._tpos(start)
             stop = self._tpos(stop)
 
             # Set position
@@ -278,7 +281,7 @@ class Trace(object):
 
         x = np.arange(start, stop, step)
         y = self.__getitem__(slice(start, stop, step))
-        line, = ax.plot(x, y)
+        line, = ax.plot(x, y, **kwargs)
 
         return line
 
@@ -629,7 +632,7 @@ class SignalStream(object):
 
 class Level(object):
 
-    def __init__(self, center, sigma, rel=True):
+    def __init__(self, center, sigma):
         self.center = center
         self.sigma = abs(sigma)
 
@@ -652,15 +655,19 @@ class Level(object):
     def abs(self):
         return (self.low, self.high)
 
-    def plot(self, ax=None, **kwargs):
+    def plot(self, ax=None, inverted=False, **kwargs):
 
         if not ax:
             ax = plt.gca()
         else:
             plt.sca(ax)
 
-        lines = [plt.axhline(self.low, **kwargs),
-                 plt.axhline(self.high, **kwargs)]
+        if inverted:
+            lines = [plt.axhline(self.low, **kwargs),
+                     plt.axhline(self.high, **kwargs)]
+        else:
+            lines = [plt.axvline(self.low, **kwargs),
+                     plt.axvline(self.high, **kwargs)]
 
         return lines
 
@@ -802,9 +809,9 @@ class Histogram(object):
         y = self.freqs if not normed else self.freqs_n
 
         if not inverted:
-            line, = ax.plot(self.bins, y, **kwargs)
+            line, = ax.step(self.bins, y, where='mid', **kwargs)
         else:
-            line, = ax.plot(y, self.bins, **kwargs)
+            line, = ax.step(y, self.bins, where='mid', **kwargs)
 
         return line
 
@@ -867,6 +874,12 @@ class Time(Histogram):
         """
         return np.abs(self.fit_exp().parameters[-1])
 
+    def fft(self, samplerate=1):
+        """Create FFT from frequencies.
+
+        """
+        return FFT(self.freqs, samplerate)
+
     def plot(self, ax=None, normed=True, log=True, **kwargs):
         """Plot time distribution.
 
@@ -877,6 +890,75 @@ class Time(Histogram):
             plt.yscale('log')
 
         return line
+
+
+class _CallableList(list):
+
+    def __init__(self, iterable):
+        list.__init__(self, iterable)
+
+    def __call__(self, *args, **kwargs):
+        return [item(*args, **kwargs) for item in self.__iter__()]
+
+
+class MultiBase(object):
+
+    def __init__(self, instances, cls):
+        # Avoid __setattr__ call
+        self.__dict__['_instances'] = instances
+        self.__dict__['_methods'] = dir(cls)
+
+    def __dir__(self):
+        return self._methods
+
+    def __iter__(self):
+        return iter(self._instances)
+
+    def __getattr__(self, name):
+        return _CallableList([getattr(instance, name)
+                              for instance in self._instances])
+
+    def __setattr__(self, name, value):
+        for instance in self._instances:
+            setattr(instance, name, value)
+
+    def __len__(self):
+        return len(self._instances)
+
+    def __getitem__(self, key):
+        return self._instances[key]
+
+
+class MultiDetector(MultiBase):
+
+    def __init__(self, detectors):
+        MultiBase.__init__(self, instances=detectors, cls=Detector)
+
+    def digitize(self, window, signals):
+        if not len(signals) == self.__len__():
+            raise ValueError('Signal len does not fit.')
+
+        for detector, signal in zip(self.__iter__(), signals):
+            detector.digitize(window, signal)
+
+
+class MultiSignal(MultiBase):
+
+    def __init__(self, signals):
+        MultiBase.__init__(self, instances=signals, cls=Signal)
+
+
+class MultiTime(MultiBase):
+
+    def __init__(self, times):
+        MultiBase.__init__(self, instances=times, cls=Time)
+
+    def add(self, signals):
+        if not len(signals) == self.__len__():
+            raise ValueError('Signal len does not fit.')
+
+        for time, signal in zip(self.__iter__(), signals):
+            time.add(signal)
 
 
 def pdetector(average=[1], nsigma=[2], system=[None], factor=1):
@@ -906,78 +988,26 @@ def psignal(data=[None], start=[0], nr=1):
             for values in product(data, start)]
 
 
-class CallableList(list):
-
-    def __init__(self, iterable):
-        list.__init__(self, iterable)
-
-    def __call__(self, *args, **kwargs):
-        return [item(*args, **kwargs) for item in self.__iter__()]
-
-
-class MultiBase(object):
-
-    def __init__(self, instances, cls):
-        # Avoid __setattr__ call
-        self.__dict__['_instances'] = instances
-        self.__dict__['_methods'] = dir(cls)
-
-    def __dir__(self):
-        return self._methods
-
-    def __iter__(self):
-        return iter(self._instances)
-
-    def __getattr__(self, name):
-        return CallableList([getattr(instance, name)
-                             for instance in self._instances])
-
-    def __setattr__(self, name, value):
-        for instance in self._instances:
-            setattr(instance, name, value)
-
-    def __len__(self):
-        return len(self._instances)
-
-    def __getitem__(self, key):
-        return self._instances[key]
-
-
-class MultiDetector(MultiBase):
-
-    def __init__(self, detectors):
-        MultiBase.__init__(self, instances=detectors, cls=Detector)
-
-
-class MultiSignal(MultiBase):
-
-    def __init__(self, signals):
-        MultiBase.__init__(self, instances=signals, cls=Signal)
-
-
-class MultiTime(MultiBase):
-
-    def __init__(self, times):
-        MultiBase.__init__(self, instances=times, cls=Time)
+def multi(detectors, nr_of_states=2):
+    mdetector = MultiDetector(detectors)
+    msignal = MultiSignal(psignal(nr=len(mdetector)))
+    return mdetector, msignal
 
 
 class FFT(object):
 
-    def __init__(self, data=None, samplerate=None):
+    def __init__(self, data=None, samplerate=1):
 
-        if samplerate is None:
-            self._samplerate = 1
-        else:
-            self._samplerate = samplerate
+        self._samplerate = samplerate
 
         if data is not None:
-            self.add(data)
+            self.transform(data)
 
-    def add(self, data):
+    def transform(self, data):
         data = np.array(data, copy=False)
         fft = np.fft.rfft(data)
-        try:
 
+        try:
             self._fft += fft
             self._samples += data.size
         except AttributeError:
@@ -1163,15 +1193,12 @@ def flevels(x, *parameters):
     return np.sum(summands, 0)
 
 
-def fit_levels(data, start_parameters):
-    """Create histogram from data and fit with a normal function.
+def fit_levels(histogram, start_parameters):
+    """Fit Histogram with a normal function.
 
     start_parameters: (a_0, mu_0 sigma_0, .... a_N, mu_N, sigma_N)
     """
-
-    # Create histogram and filter everything
-    histo = Histogram(data=data)
-    fit = Fit(flevels, histo.bins, histo.freqs_n, start_parameters)
+    fit = Fit(flevels, histogram.bins, histogram.freqs_n, start_parameters)
 
     # Filter levels=(mu_0, sigma_0, ..., mu_N, sigma_N)
     index = np.array([False, True, True] * (len(fit.parameters) / 3))
@@ -1179,4 +1206,4 @@ def fit_levels(data, start_parameters):
     system = System(*[Level(levels[i], levels[i+1])
                     for i in xrange(0, len(levels), 2)])
 
-    return system, fit, histo
+    return system, fit
