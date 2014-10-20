@@ -388,6 +388,9 @@ class Detector(object):
         return lines
 
 
+
+
+
 class Signal(object):
 
     def __init__(self, data=None, start=0):
@@ -403,7 +406,7 @@ class Signal(object):
             data = [(-1, 0, 0)]
 
         self._data = np.array(data, dtype=self._dlevel)
-        self._start = start
+        self.start = start
 
     def __repr__(self):
         return repr(self._data)
@@ -417,10 +420,6 @@ class Signal(object):
     @property
     def data(self):
         return self._data
-
-    @property
-    def start(self):
-        return self._start
 
     def append(self, levels):
         """Append new list of levels to signal.
@@ -438,7 +437,7 @@ class Signal(object):
         """Position array of signal.
 
         """
-        return self._start + np.cumsum(self._data['length'])
+        return self.start + np.cumsum(self._data['length'])
 
     @property
     def state(self):
@@ -490,6 +489,7 @@ class Signal(object):
         line, = ax.step(x, y['value'], **kwargs)
 
         return line
+
 
 
 class SignalStream(object):
@@ -892,7 +892,7 @@ class Time(Histogram):
         return line
 
 
-class _CallableList(list):
+class CallableList(list):
 
     def __init__(self, iterable):
         list.__init__(self, iterable)
@@ -915,8 +915,8 @@ class MultiBase(object):
         return iter(self._instances)
 
     def __getattr__(self, name):
-        return _CallableList([getattr(instance, name)
-                              for instance in self._instances])
+        return CallableList([getattr(instance, name)
+                             for instance in self._instances])
 
     def __setattr__(self, name, value):
         for instance in self._instances:
@@ -1198,6 +1198,7 @@ def fit_levels(histogram, start_parameters):
 
     start_parameters: (a_0, mu_0 sigma_0, .... a_N, mu_N, sigma_N)
     """
+
     fit = Fit(flevels, histogram.bins, histogram.freqs_n, start_parameters)
 
     # Filter levels=(mu_0, sigma_0, ..., mu_N, sigma_N)
@@ -1207,3 +1208,77 @@ def fit_levels(histogram, start_parameters):
                     for i in xrange(0, len(levels), 2)])
 
     return system, fit
+
+
+class LevelTrace(object):
+    """Store and display fit parameters.
+
+    """
+
+    def __init__(self, start_parameters, tc=1, start=0):
+        self._start_parameters = start_parameters
+        self._parameters = []
+        self.tc = tc
+        self.start = start
+
+    def __getitem__(self, key):
+        return self._parameters[key]
+
+    def __iter__(self):
+        return iter(self._parameters)
+
+    def __len__(self):
+        return len(self._parameters)
+
+    def fit(self, histogram):
+        """Fit levels
+
+        """
+
+        # Fit with last parameters
+        system, fit = fit_levels(histogram, self._start_parameters)
+
+        # Store parameters
+        self._start_parameters = fit.parameters
+        self._parameters.append(fit.parameters)
+
+        # Return current system and fit
+        return system, fit
+
+    @property
+    def parameters(self):
+        """Return all fit parameters as numpy array.
+
+        """
+        return np.transpose(self._parameters)
+
+    @property
+    def position(self):
+        """Return position array,
+
+        """
+        return np.linspace(self.start, self.tc * (self.__len__() - 1),
+                           self.__len__())
+
+    @property
+    def hight(self):
+        return self.parameters[0::3]
+
+    @property
+    def center(self):
+        return self.parameters[1::3]
+
+    @property
+    def sigma(self):
+        return self.parameters[2::3]
+
+    def plot(self, ax=None, show='center', **kwargs):
+
+        if not ax:
+            ax = plt.gca()
+
+        ys = self.__getattribute__(show)
+
+        lines = [ax.plot(self.position, y, **kwargs) for y in ys]
+
+        return lines
