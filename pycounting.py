@@ -281,9 +281,8 @@ class Trace(object):
 
         x = np.arange(start, stop, step)
         y = self.__getitem__(slice(start, stop, step))
-        line, = ax.plot(x, y, **kwargs)
 
-        return line
+        return ax.plot(x, y, **kwargs)
 
 
 class Detector(object):
@@ -384,29 +383,31 @@ class Detector(object):
         if not ax:
             ax = plt.gca()
 
-        lines = [plt.axhline(value, **kwargs) for value in self.abs]
+        lines = [plt.axhline(value, **kwargs)[0] for value in self.abs]
         return lines
-
-
-
 
 
 class Signal(object):
 
+    dlevel = np.dtype([('state', np.int16),
+                       ('length', np.int64),
+                       ('value', np.float64)])
+
     def __init__(self, data=None, start=0):
 
         # Define signals numpy datatype
-        self._dlevel = np.dtype([('state', np.int16),
-                                 ('length', np.int64),
-                                 ('value', np.float64)])
-
         if isinstance(data, str):
-            data = np.fromfile(data, dtype=self._dlevel)
+            data = np.fromfile(data, dtype=self.dlevel)
         elif data is None:
             data = [(-1, 0, 0)]
 
-        self._data = np.array(data, dtype=self._dlevel)
+        self._data = np.array(data, dtype=self.dlevel)
         self.start = start
+
+    @classmethod
+    def from_file(cls, filename):
+        data = np.fromfile(filename, dtype=cls.dlevel)
+        return cls(data)
 
     def __repr__(self):
         return repr(self._data)
@@ -425,7 +426,7 @@ class Signal(object):
         """Append new list of levels to signal.
 
         """
-        new_data = np.array(levels, dtype=self._dlevel)
+        new_data = np.array(levels, dtype=self.dlevel)
         self._data = np.concatenate((self._data, new_data))
 
     def range(self, start, stop):
@@ -467,18 +468,18 @@ class Signal(object):
         return self._data['value'].mean()
 
     def save(self, filename):
-        """Write everything to datafile.
+        """Write everything to file.
 
         """
         self._data.tofile(filename)
 
     def flush(self, fobj=None, nr=-1):
-        """Flush signal to file.
+        """Flush nr of levels to file.
 
         """
         if fobj:
             self._data[:nr].tofile(fobj)
-        self._data = np.array(self._data[nr:], dtype=self._dlevel)
+        self._data = np.array(self._data[nr:], dtype=self.dlevel)
 
     def plot(self, start, stop, ax=None, **kwargs):
 
@@ -486,10 +487,7 @@ class Signal(object):
             ax = plt.gca()
 
         x, y = self.range(start, stop)
-        line, = ax.step(x, y['value'], **kwargs)
-
-        return line
-
+        return ax.step(x, y['value'], **kwargs)
 
 
 class SignalStream(object):
@@ -675,33 +673,50 @@ class Level(object):
 class System(object):
 
     def __init__(self, *levels):
-        self._levels = levels
+        self.levels = levels
+
+    @classmethod
+    def from_histogram(cls, histogram, start_parameters):
+        """Create System from Histogram.
+
+        start_parameters: (a_0, mu_0 sigma_0, .... a_N, mu_N, sigma_N)
+        """
+
+        fit = Fit(flevels, histogram.bins, histogram.freqs_n, start_parameters)
+
+        # Filter levels=(mu_0, sigma_0, ..., mu_N, sigma_N)
+        index = np.array([False, True, True] * (len(fit.parameters) / 3))
+        levels = fit.parameters[index]
+        system = cls(*[Level(levels[i], levels[i+1])
+                       for i in xrange(0, len(levels), 2)])
+
+        return system, fit
 
     def __getitem__(self, key):
-        return self._levels[key]
+        return self.levels[key]
 
     def __repr__(self):
         s = 'System:'
-        for nr, level in enumerate(self._levels):
+        for nr, level in enumerate(self.levels):
             s += '\n'
             s += str(nr) + ': ' + str(level)
 
         return s
 
     def __len__(self):
-        return len(self._levels)
+        return len(self.levels)
 
     @property
     def abs(self):
         values = []
-        for level in self._levels:
+        for level in self.levels:
             values += level.abs
         return values
 
     @property
     def rel(self):
         values = []
-        for level in self._levels:
+        for level in self.levels:
             values += level.rel
         return values
 
@@ -717,7 +732,7 @@ class System(object):
             plt.sca(ax)
 
         lines = []
-        for level in self._levels:
+        for level in self.levels:
             lines += level.plot(ax, **kwargs)
 
         return lines
@@ -809,9 +824,11 @@ class Histogram(object):
         y = self.freqs if not normed else self.freqs_n
 
         if not inverted:
-            line, = ax.step(self.bins, y, where='mid', **kwargs)
+            line = ax.plot(self.bins, y, **kwargs)
+            # line = ax.step(self.bins, y, where='mid', **kwargs)
         else:
-            line, = ax.step(y, self.bins, where='mid', **kwargs)
+            line = ax.plot(y, self.bins, **kwargs)
+            # line = ax.step(y, self.bins, where='mid', **kwargs)
 
         return line
 
@@ -820,7 +837,7 @@ class Time(Histogram):
 
     def __init__(self, state, bins=1000, width=None, signal=None):
 
-        self._state = state
+        self.state = state
 
         if not width:
             width = (0, bins)
@@ -832,19 +849,11 @@ class Time(Histogram):
         else:
             Histogram.__init__(self, bins=bins, width=width)
 
-    @property
-    def state(self):
-        return self._state
-
-    @state.setter
-    def state(self, state):
-        return self._state
-
     def add(self, signal):
         """Add time to signal.
 
         """
-        times = signal['length'][signal.state == self._state]
+        times = signal['length'][signal.state == self.state]
         Histogram.add(self, times)
 
     def fit_exp(self, a=None, rate=None, normed=True):
@@ -863,7 +872,7 @@ class Time(Histogram):
                 a = self.max_freq
             freqs = self.freqs
 
-        fit = fit_exp(self.bins, freqs, a, rate)
+        fit = Fit.exp(self.bins, freqs, a, rate)
         fit.rate = np.abs(fit.parameters[-1])
         return fit
 
@@ -934,6 +943,15 @@ class MultiDetector(MultiBase):
     def __init__(self, detectors):
         MultiBase.__init__(self, instances=detectors, cls=Detector)
 
+    @classmethod
+    def from_product(cls, average=[1], nsigma=[2], system=[None], factor=1):
+        """Create MultiDetector from cartesian product of attributes.
+
+        """
+        return cls([Detector(*values)
+                    for i in range(factor)
+                    for values in product(average, nsigma, system)])
+
     def digitize(self, window, signals):
         if not len(signals) == self.__len__():
             raise ValueError('Signal len does not fit.')
@@ -947,11 +965,30 @@ class MultiSignal(MultiBase):
     def __init__(self, signals):
         MultiBase.__init__(self, instances=signals, cls=Signal)
 
+    @classmethod
+    def from_product(cls, state, bin=[1000], width=[None], signal=[None],
+                     nr=1):
+        """Create MultiSignal from cartesian product of attributes.
+
+        """
+        return cls([Time(*values)
+                    for i in range(nr)
+                    for values in product(state, bin, width, signal)])
+
 
 class MultiTime(MultiBase):
 
     def __init__(self, times):
         MultiBase.__init__(self, instances=times, cls=Time)
+
+    @classmethod
+    def from_product(cls, data=[None], start=[0], nr=1):
+        """Create MultiTime from cartesian product of attributes.
+
+        """
+        return cls([Signal(*values)
+                    for i in range(nr)
+                    for values in product(data, start)])
 
     def add(self, signals):
         if not len(signals) == self.__len__():
@@ -961,36 +998,9 @@ class MultiTime(MultiBase):
             time.add(signal)
 
 
-def pdetector(average=[1], nsigma=[2], system=[None], factor=1):
-    """Create detector list of with cartesian product of attributes.
-
-    """
-    return [Detector(*values)
-            for i in range(factor)
-            for values in product(average, nsigma, system)]
-
-
-def ptime(state, bin=[1000], width=[None], signal=[None], nr=1):
-    """Create time list of with cartesian product of attributes.
-
-    """
-    return [Time(*values)
-            for i in range(nr)
-            for values in product(state, bin, width, signal)]
-
-
-def psignal(data=[None], start=[0], nr=1):
-    """Create signal list with cartesian product of attributes.
-
-    """
-    return [Signal(*values)
-            for i in range(nr)
-            for values in product(data, start)]
-
-
 def multi(detectors, nr_of_states=2):
     mdetector = MultiDetector(detectors)
-    msignal = MultiSignal(psignal(nr=len(mdetector)))
+    msignal = MultiSignal.from_product(nr=len(mdetector))
     return mdetector, msignal
 
 
@@ -1078,7 +1088,7 @@ class FFT(object):
 
         # Plot data range
         index = (self.freq > range[0]) & (self.freq < range[1])
-        line, = ax.plot(freq[index], fft[index], **kwargs)
+        line = ax.plot(freq[index], fft[index], **kwargs)
 
         # Log everything
         if log:
@@ -1091,61 +1101,12 @@ class FFT(object):
         return line
 
 
-class Fit(object):
-
-    def __init__(self, function, xdata, ydata, start_parameters):
-        self._function = function
-        self._parameters, self._error = curve_fit(function, xdata, ydata,
-                                                  start_parameters)
-
-    def __call__(self, x):
-        return self._function(x, *self._parameters)
-
-    def values(self, x):
-        y = self._function(x, *self._parameters)
-        return x, y
-
-    @property
-    def function(self):
-        return self._function
-
-    @property
-    def parameters(self):
-        return self._parameters
-
-    @property
-    def error(self):
-        return self._error
-
-    def plot(self, x, ax=None, inverted=False, **kwargs):
-        """Plot the fit function for x.
-
-        """
-
-        if not ax:
-            ax = plt.gca()
-
-        if not inverted:
-            line, = ax.plot(x, self.__call__(x), **kwargs)
-        else:
-            line, = ax.plot(self.__call__(x), x, **kwargs)
-
-        return line
-
-
 def flinear(x, m=1, y0=0):
     """Linear function.
 
     """
     x = np.array(x, copy=False)
     return m * x + y0
-
-
-def fit_linear(xdata, ydata, m=1, y0=0):
-    """Fit data with linear function.
-
-    """
-    return Fit(flinear, xdata, ydata, (m, y0))
 
 
 def fexp(x, a=1, tau=-1):
@@ -1155,26 +1116,12 @@ def fexp(x, a=1, tau=-1):
     return a * np.exp(x / float(tau))
 
 
-def fit_exp(xdata, ydata, a=1, tau=-1):
-    """Fit data with exponential function.
-
-    """
-    return Fit(fexp, xdata, ydata, (a, tau))
-
-
 def fnormal(x, a=1, mu=0, sigma=1):
     """Normal distribution.
 
     """
     x = np.array(x, copy=False)
     return a * np.exp(-(x - mu)**2 / (2. * sigma**2))
-
-
-def fit_normal(xdata, ydata, a=1, mu=0, sigma=1):
-    """Fit data with a normal distribution.
-
-    """
-    return Fit(fnormal, xdata, ydata, (a, mu, sigma))
 
 
 def flevels(x, *parameters):
@@ -1193,21 +1140,82 @@ def flevels(x, *parameters):
     return np.sum(summands, 0)
 
 
-def fit_levels(histogram, start_parameters):
-    """Fit Histogram with a normal function.
+class Fit(object):
 
-    start_parameters: (a_0, mu_0 sigma_0, .... a_N, mu_N, sigma_N)
-    """
+    def __init__(self, function, xdata, ydata, start_parameters):
+        self._function = function
+        self._parameters, self._error = curve_fit(function, xdata, ydata,
+                                                  start_parameters)
 
-    fit = Fit(flevels, histogram.bins, histogram.freqs_n, start_parameters)
+    @classmethod
+    def linear(cls, xdata, ydata, m=1, y0=0):
+        """Fit data with linear function.
 
-    # Filter levels=(mu_0, sigma_0, ..., mu_N, sigma_N)
-    index = np.array([False, True, True] * (len(fit.parameters) / 3))
-    levels = fit.parameters[index]
-    system = System(*[Level(levels[i], levels[i+1])
-                    for i in xrange(0, len(levels), 2)])
+        """
+        return cls(flinear, xdata, ydata, (m, y0))
 
-    return system, fit
+    @classmethod
+    def exp(cls, xdata, ydata, a=1, tau=-1):
+        """Fit data with exponential function.
+
+        """
+        return cls(fexp, xdata, ydata, (a, tau))
+
+    @classmethod
+    def normal(cls, xdata, ydata, a=1, mu=0, sigma=1):
+        """Fit data with a normal distribution.
+
+        """
+        return cls(fnormal, xdata, ydata, (a, mu, sigma))
+
+    def __call__(self, x):
+        """Call fit function.
+
+        """
+        return self._function(x, *self._parameters)
+
+    def values(self, x):
+        """x and calculated y = Fit(x) values.
+
+        """
+        y = self._function(x, *self._parameters)
+        return x, y
+
+    @property
+    def function(self):
+        """Fit base function.
+
+        """
+        return self._function
+
+    @property
+    def parameters(self):
+        """Fit parameters.
+
+        """
+        return self._parameters
+
+    @property
+    def error(self):
+        """Fit error values.
+
+        """
+        return self._error
+
+    def plot(self, x, ax=None, inverted=False, **kwargs):
+        """Plot the fit function for x.
+
+        """
+
+        if not ax:
+            ax = plt.gca()
+
+        if not inverted:
+            line = ax.plot(x, self.__call__(x), **kwargs)
+        else:
+            line = ax.plot(self.__call__(x), x, **kwargs)
+
+        return line
 
 
 class LevelTrace(object):
@@ -1220,6 +1228,10 @@ class LevelTrace(object):
         self._parameters = []
         self.tc = tc
         self.start = start
+
+    @classmethod
+    def from_file(cls):
+        pass
 
     def __getitem__(self, key):
         return self._parameters[key]
@@ -1234,9 +1246,8 @@ class LevelTrace(object):
         """Fit levels
 
         """
-
         # Fit with last parameters
-        system, fit = fit_levels(histogram, self._start_parameters)
+        system, fit = System.from_histogram(histogram, self._start_parameters)
 
         # Store parameters
         self._start_parameters = fit.parameters
@@ -1272,13 +1283,25 @@ class LevelTrace(object):
     def sigma(self):
         return self.parameters[2::3]
 
-    def plot(self, ax=None, show='center', **kwargs):
+    def save(self, filename):
+        """Write everything to datafile.
+
+        """
+        pass
+
+    def flush(self, fobj=None, nr=-1):
+        """Flush signal to file.
+
+        """
+        pass
+
+    def plot(self, show='center', ax=None, **kwargs):
 
         if not ax:
             ax = plt.gca()
 
         ys = self.__getattribute__(show)
 
-        lines = [ax.plot(self.position, y, **kwargs) for y in ys]
+        lines = [ax.plot(self.position, y, **kwargs)[0] for y in ys]
 
         return lines
