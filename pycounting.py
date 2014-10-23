@@ -7,6 +7,7 @@ import glob
 import matplotlib.pyplot as plt
 from cdetector import digitize as _digitize
 from itertools import product
+import h5py
 
 
 def tc(sampling_rate, timestr='s'):
@@ -341,7 +342,7 @@ class Detector(object):
                                  low0, high0, low1, high1)
 
         # Update values of the last level in signal
-        signal.data[-1] = new_signal[0]
+        signal[-1] = new_signal[0]
 
         # Append new_signal to signal
         signal.append(new_signal[1:])
@@ -388,244 +389,60 @@ class Detector(object):
 
 
 class Signal(object):
+    """Counting Signal class.
 
-    dlevel = np.dtype([('state', np.int16),
-                       ('length', np.int64),
-                       ('value', np.float64)])
-
-    def __init__(self, data=None, start=0):
-
-        # Define signals numpy datatype
-        if isinstance(data, str):
-            data = np.fromfile(data, dtype=self.dlevel)
-        elif data is None:
-            data = [(-1, 0, 0)]
-
-        self._data = np.array(data, dtype=self.dlevel)
-        self.start = start
-
-    @classmethod
-    def from_file(cls, filename):
-        data = np.fromfile(filename, dtype=cls.dlevel)
-        return cls(data)
-
-    def __repr__(self):
-        return repr(self._data)
-
-    def __getitem__(self, key):
-        return self._data[key]
-
-    def __len__(self):
-        return self._data.size
-
-    @property
-    def data(self):
-        return self._data
-
-    def append(self, levels):
-        """Append new list of levels to signal.
-
-        """
-        new_data = np.array(levels, dtype=self.dlevel)
-        self._data = np.concatenate((self._data, new_data))
-
-    def range(self, start, stop):
-        index = (self.position >= start) & (self.position < stop)
-        return self.position[index], self._data[index]
-
-    @property
-    def position(self):
-        """Position array of signal.
-
-        """
-        return self.start + np.cumsum(self._data['length'])
-
-    @property
-    def state(self):
-        """Sate array of signal.
-
-        """
-        return self._data['state']
-
-    @property
-    def length(self):
-        """Length array of signal.
-
-        """
-        return self._data['length']
-
-    @property
-    def value(self):
-        """Value array of signal.
-
-        """
-        return self._data['value']
-
-    @property
-    def mean(self):
-        """Mean value of signal.
-        """
-        return self._data['value'].mean()
-
-    def save(self, filename):
-        """Write everything to file.
-
-        """
-        self._data.tofile(filename)
-
-    def flush(self, fobj=None, nr=-1):
-        """Flush nr of levels to file.
-
-        """
-        if fobj:
-            self._data[:nr].tofile(fobj)
-        self._data = np.array(self._data[nr:], dtype=self.dlevel)
-
-    def plot(self, start, stop, ax=None, **kwargs):
-
-        if not ax:
-            ax = plt.gca()
-
-        x, y = self.range(start, stop)
-        return ax.step(x, y['value'], **kwargs)
-
-
-class SignalStream(object):
-    """Handel FCSignal files.
+    It uses HDF5 to store the data.
 
     """
 
-    def __init__(self, filename, seperator=';'):
+    dtype = np.dtype([('state', np.int16),
+                      ('length', np.int64),
+                      ('value', np.float64)])
 
-        # Store the filelist
-        self._filename = filename
-        self._fileobj = open(self._filename, 'rb')
+    def __init__(self, filename, dataset='signal', start=0):
 
-        # Set seperator of fcsignal txtfile
-        self._seperator = seperator
+        self.file = h5py.File(filename)
+        try:
+            # Open dataset
+            self._dset = self.file[dataset]
+        except KeyError:
+            # Create dataset
+            self._dset = self.file.create_dataset(dataset,
+                                                  shape=(0,),
+                                                  dtype=self.dtype,
+                                                  maxshape=(None,))
+            self.append((-1, 0, 0))
 
-        # Set event and position to the start of the fcsignal
-        self._goto_start()
-
-    def _goto_start(self):
-        """Go back to start position in fcsignal.
-
-        """
-        self._fileobj.seek(0)
-        self._next_position = 0
-        self._next_event = 0
+        self.start = start
 
     def __getitem__(self, key):
-        self.event_nr = key
-        return self.next()
+        return self._dset[key]
 
-    @property
-    def position(self):
-        """Get and set the position.
+    def __setitem__(self, key, value):
+        self._dset[key] = value
 
-        Postion will always be the next event of set position.
-        """
-        return self._next_position
-
-    @position.setter
-    def position(self, position):
-        if position < self.position:
-            self._goto_start()
-
-        while self.position < position:
-            self.next()
-
-    @property
-    def event_nr(self):
-        """Get and set the event.
+    def __len__(self):
+        """Number of levels.
 
         """
-        return self._next_event
+        return self._dset.size
 
-    @event_nr.setter
-    def event_nr(self, nr):
-        if nr < self.event_nr:
-            self._goto_start()
+    def close(self):
+        self.file.close()
 
-        while self.event_nr < nr:
-            self.next()
-
-    def __iter__(self):
-        self._goto_start()
-        return self
-
-    def next(self):
-        """Return next event of signal.
+    def append(self, data):
+        """Append new data.
 
         """
+        data = np.array(data, dtype=self.dtype, copy=False)
 
-        # Read next line from fcsignal file
-        linestr = self._fileobj.readline()
+        # Resize the dataset
+        size0 = self._dset.size
+        size1 = data.size + size0
+        self._dset.resize((size1,))
 
-        if not linestr:
-            raise StopIteration
-
-        # Split the line
-        line = linestr.replace(' ', '').split(self._seperator)
-
-        # Create a level from the line
-        state = int(line[0])
-        length = int(line[1])
-        value = float(line[2])
-        level = [state, length, value]
-
-        # Calculate the position of next level and increment event
-        self._next_position += length
-        self._next_event += 1
-
-        # Return the level
-        return level
-
-    def events(self, start=0, stop=None):
-        """Return event iterator.
-
-        """
-
-        self.event_nr = start
-
-        while self._next_event < stop or stop is None:
-            yield self.next()
-
-    def next_events(self, nr_of_events):
-        """Return number of events in length.
-
-        """
-        start = self.event_nr
-        stop = start + nr_of_events
-
-        for event in self.events(start, stop):
-            yield event
-
-    def read_events(self, start=0, stop=None):
-        return list(self.events(start, stop))
-
-    def range(self, start=0, stop=None):
-        """Return interator over range (start, stop].
-
-        """
-
-        self.position = start
-
-        while self._next_position < stop or stop is None:
-            yield self.next()
-
-    def next_range(self, length):
-        """Return number of events in length.
-
-        """
-        start = self.position
-        stop = start + length
-
-        for event in self.range(start, stop):
-            yield event
-
-    def read_range(self, start=0, stop=None):
-        return list(self.range(start, stop))
+        # Insert new data
+        self._dset[size0:size1] = data
 
 
 class Level(object):
@@ -1228,10 +1045,6 @@ class LevelTrace(object):
         self._parameters = []
         self.tc = tc
         self.start = start
-
-    @classmethod
-    def from_file(cls):
-        pass
 
     def __getitem__(self, key):
         return self._parameters[key]
