@@ -331,21 +331,12 @@ class Detector(object):
         except ValueError:
             pass
 
-        # Get the last signal and store it in new signal
-        new_signal = [signal[-1]]
-
         # Get the boundaries of the levels
         low0, high0, low1, high1 = self.abs
 
         # CYTHON: Digitize the data
-        self._buffer = _digitize(data, new_signal, int(self.average),
+        self._buffer = _digitize(data, signal, int(self.average),
                                  low0, high0, low1, high1)
-
-        # Update values of the last level in signal
-        signal[-1] = new_signal[0]
-
-        # Append new_signal to signal
-        signal.append(new_signal[1:])
 
     @property
     def abs(self):
@@ -395,54 +386,69 @@ class Signal(object):
 
     """
 
-    dtype = np.dtype([('state', np.int16),
-                      ('length', np.int64),
-                      ('value', np.float64)])
+    def __init__(self, file_hdf5, groupname=None, start=0,
+                 state_type=np.int8,
+                 length_type=np.uint32,
+                 value_type=np.float32):
 
-    def __init__(self, filename, dataset='signal', start=0):
-
-        self.file = h5py.File(filename)
         try:
-            # Open dataset
-            self._dset = self.file[dataset]
+            # Open existing dataset
+            if groupname is None:
+                self._group = file_hdf5['/']
+            else:
+                self._group = file_hdf5[groupname]
+            self.signal = self._group['signal']
         except KeyError:
-            # Create dataset
-            self._dset = self.file.create_dataset(dataset,
-                                                  shape=(0,),
-                                                  dtype=self.dtype,
-                                                  maxshape=(None,))
+            dtype = np.dtype([('state', state_type),
+                              ('length', length_type),
+                              ('value', value_type)])
+
+            # Create unlimited 1d dataset to store signal
+            print groupname
+            if groupname is None:
+                self._group = file_hdf5['/']
+            else:
+                self._group = file_hdf5.create_group(groupname)
+            self.signal = self._group.create_dataset('signal',
+                                                     shape=(0,),
+                                                     dtype=dtype,
+                                                     maxshape=(None,))
+            # Insert undifiended state
             self.append((-1, 0, 0))
 
-        self.start = start
-
     def __getitem__(self, key):
-        return self._dset[key]
+        return self.signal[key]
 
     def __setitem__(self, key, value):
-        self._dset[key] = value
+        self.signal[key] = value
 
     def __len__(self):
         """Number of levels.
 
         """
-        return self._dset.size
+        return self.signal.size
 
-    def close(self):
-        self.file.close()
+    @property
+    def dtype(self):
+        return self.signal.dtype
 
-    def append(self, data):
+    def append(self, signal):
         """Append new data.
 
         """
-        data = np.array(data, dtype=self.dtype, copy=False)
+
+        # self.signal[-1] = signal[0]
+        # del signal[0]
+
+        signal = np.array(signal, dtype=self.dtype, copy=False)
 
         # Resize the dataset
-        size0 = self._dset.size
-        size1 = data.size + size0
-        self._dset.resize((size1,))
+        size0 = self.signal.size
+        size1 = signal.size + size0
+        self.signal.resize((size1,))
 
         # Insert new data
-        self._dset[size0:size1] = data
+        self.signal[size0:size1] = signal
 
 
 class Level(object):

@@ -21,13 +21,13 @@ def digitize(np.ndarray[datatype, ndim=1] trace,
     cdef int datapoint_state
 
     # Level variables
+    new_signal = list()
     cdef int  level_state
     cdef long level_length
     cdef double level_value
 
     # Get the values from the last level as starting position
     level_state, level_length, level_value = signal[-1]
-    del signal[-1]
 
     # Iterate through array by c stlye indexing. Keep always enough points for averraging.
     cdef unsigned long i
@@ -54,15 +54,20 @@ def digitize(np.ndarray[datatype, ndim=1] trace,
             pass
         else:
             # State changed
-            signal.append((level_state, level_length, level_value))
+            new_signal.append((level_state, level_length, level_value))
 
             # Reset level
             level_state  = datapoint_state
             level_length = 0
             level_value  = datapoint
 
-    #Append the unfinished levels
-    signal.append((level_state, level_length, level_value))
+    # Append unfinished stuff
+    new_signal.append((level_state, level_length, level_value))
+
+    # Update last level and append the rest
+    signal[-1] = new_signal[0]
+    del new_signal[0]
+    signal.append(new_signal)
 
     # Return the buffer that is necassary to buffer
     return trace[-average:].copy()
