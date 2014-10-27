@@ -55,6 +55,80 @@ def list_filenames(pathname):
     return sorted(files)
 
 
+class Hdf5Base(object):
+
+    def __init__(self, dataset):
+        self._dataset = dataset
+
+    def __getitem__(self, key):
+        return self._dataset[key]
+
+    def __setitem__(self, key, value):
+        self._dataset[key] = value
+
+    def __len__(self):
+        """Number of levels.
+
+        """
+        return self._dataset.size
+
+    def windows(self, length, start=0, stop=None):
+        """Iterator over windows of length.
+
+        """
+
+        # set stop to the end of dataset
+        if stop is None:
+            stop = self.__len__()
+
+        # Make everything integers of xrange and slice
+        length = int(length)
+        start = int(start)
+        stop = int(stop)
+
+        # Start iteration over data
+        for position in xrange(start, stop, length):
+            # Stop iteration if not enough datapoints available
+            if stop < (position + length):
+                return
+
+            # Return current data window
+            yield self.__getitem__(slice(position, position+length))
+
+    @property
+    def chunks(self):
+        return self._dataset.chunks
+
+    @property
+    def dtype(self):
+        """Datatpye of the signal.
+
+        """
+        return self._dataset.dtype
+
+    @property
+    def attrs(self):
+        """Access the attributes.
+
+        """
+        return self._dataset.attrs
+
+    def append(self, data):
+        """Append new data at the end of signal.
+
+        """
+
+        data = np.array(data, dtype=self.dtype, copy=False)
+
+        # Resize the dataset
+        size0 = self.__len__()
+        size1 = data.size + size0
+        self._dataset.resize((size1,))
+
+        # Insert new data
+        self._dataset[size0:size1] = data
+
+
 class Trace(object):
     """Handle binary counting data files very flexible.
 
@@ -254,7 +328,7 @@ class Trace(object):
         return data
 
     def windows(self, length, start=0, stop=None, nr=None):
-        """Iterator over time windows.
+        """Iterator over windows of length.
 
         """
 
@@ -357,6 +431,7 @@ class Detector(object):
         """List of absolute boundarie values.
 
         The values are calculted from the system levels with nsigma.
+
         """
 
         rel = []
@@ -377,78 +452,6 @@ class Detector(object):
 
         lines = [plt.axhline(value, **kwargs)[0] for value in self.abs]
         return lines
-
-
-class Signal(object):
-    """Counting Signal class.
-
-    It uses HDF5 to store the data.
-
-    """
-
-    def __init__(self, file_hdf5, groupname=None, start=0,
-                 state_type=np.int8,
-                 length_type=np.uint32,
-                 value_type=np.float32):
-
-        try:
-            # Open existing dataset
-            if groupname is None:
-                self._group = file_hdf5['/']
-            else:
-                self._group = file_hdf5[groupname]
-            self.signal = self._group['signal']
-        except KeyError:
-            dtype = np.dtype([('state', state_type),
-                              ('length', length_type),
-                              ('value', value_type)])
-
-            # Create unlimited 1d dataset to store signal
-            print groupname
-            if groupname is None:
-                self._group = file_hdf5['/']
-            else:
-                self._group = file_hdf5.create_group(groupname)
-            self.signal = self._group.create_dataset('signal',
-                                                     shape=(0,),
-                                                     dtype=dtype,
-                                                     maxshape=(None,))
-            # Insert undifiended state
-            self.append((-1, 0, 0))
-
-    def __getitem__(self, key):
-        return self.signal[key]
-
-    def __setitem__(self, key, value):
-        self.signal[key] = value
-
-    def __len__(self):
-        """Number of levels.
-
-        """
-        return self.signal.size
-
-    @property
-    def dtype(self):
-        return self.signal.dtype
-
-    def append(self, signal):
-        """Append new data.
-
-        """
-
-        # self.signal[-1] = signal[0]
-        # del signal[0]
-
-        signal = np.array(signal, dtype=self.dtype, copy=False)
-
-        # Resize the dataset
-        size0 = self.signal.size
-        size1 = signal.size + size0
-        self.signal.resize((size1,))
-
-        # Insert new data
-        self.signal[size0:size1] = signal
 
 
 class Level(object):
@@ -559,6 +562,88 @@ class System(object):
             lines += level.plot(ax, **kwargs)
 
         return lines
+
+
+class LevelTrace(Hdf5Base):
+    """Store and display fit parameters.
+
+    Signal uses the h5py module to store the data in HDF5 format.
+
+    """
+
+    @classmethod
+    def create(cls, hdf5_file, dataset_string, start_parameters):
+
+        # Define dtype
+        type_list = list()
+        for nr in range(len(start_parameters) / 3):
+            type_list += [('hight' + str(nr), np.float32),
+                          ('center' + str(nr), np.float32),
+                          ('sigma' + str(nr), np.float32)]
+        dtype = np.dtype(type_list)
+
+        # Create dataset
+        dset = hdf5_file.create_dataset(dataset_string, shape=(0,),
+                                        dtype=dtype, maxshape=(None,))
+
+        # Create signal instance and append undifined level
+        level_trace = cls(dset)
+        level_trace.start_parameters = start_parameters
+
+        return level_trace
+
+    def fit(self, histogram):
+        """Fit levels
+
+        """
+        # Fit with last parameters
+        system, fit = System.from_histogram(histogram, self.start_parameters)
+
+        # Store parameters
+        self.start_parameters = fit.parameters
+        self.append(tuple(fit.parameters))
+
+        # Return current system and fit
+        return system, fit
+
+    def plot(self, show='center', ax=None, **kwargs):
+
+        if not ax:
+            ax = plt.gca()
+
+        ys = self.__getattribute__(show)
+
+        lines = [ax.plot(self.position, y, **kwargs)[0] for y in ys]
+
+        return lines
+
+
+class Signal(Hdf5Base):
+    """Counting Signal class.
+
+    Signal uses the h5py module to store the data in HDF5 format.
+
+    """
+
+    @classmethod
+    def create(cls, hdf5_file, dataset_string, state_type=np.int8,
+               length_type=np.uint32, value_type=np.float32, **kwargs):
+
+        # Define dtype
+        dtype = np.dtype([('state', state_type),
+                          ('length', length_type),
+                          ('value', value_type)])
+
+        # Create dataset
+        dset = hdf5_file.create_dataset(dataset_string, shape=(0,),
+                                        dtype=dtype, maxshape=(None,),
+                                        **kwargs)
+
+        # Create signal instance and append undifined level
+        signal = cls(dset)
+        signal.append((-1, 0, 0))
+
+        return signal
 
 
 class Histogram(object):
@@ -1041,86 +1126,3 @@ class Fit(object):
         return line
 
 
-class LevelTrace(object):
-    """Store and display fit parameters.
-
-    """
-
-    def __init__(self, start_parameters, tc=1, start=0):
-        self._start_parameters = start_parameters
-        self._parameters = []
-        self.tc = tc
-        self.start = start
-
-    def __getitem__(self, key):
-        return self._parameters[key]
-
-    def __iter__(self):
-        return iter(self._parameters)
-
-    def __len__(self):
-        return len(self._parameters)
-
-    def fit(self, histogram):
-        """Fit levels
-
-        """
-        # Fit with last parameters
-        system, fit = System.from_histogram(histogram, self._start_parameters)
-
-        # Store parameters
-        self._start_parameters = fit.parameters
-        self._parameters.append(fit.parameters)
-
-        # Return current system and fit
-        return system, fit
-
-    @property
-    def parameters(self):
-        """Return all fit parameters as numpy array.
-
-        """
-        return np.transpose(self._parameters)
-
-    @property
-    def position(self):
-        """Return position array,
-
-        """
-        return np.linspace(self.start, self.tc * (self.__len__() - 1),
-                           self.__len__())
-
-    @property
-    def hight(self):
-        return self.parameters[0::3]
-
-    @property
-    def center(self):
-        return self.parameters[1::3]
-
-    @property
-    def sigma(self):
-        return self.parameters[2::3]
-
-    def save(self, filename):
-        """Write everything to datafile.
-
-        """
-        pass
-
-    def flush(self, fobj=None, nr=-1):
-        """Flush signal to file.
-
-        """
-        pass
-
-    def plot(self, show='center', ax=None, **kwargs):
-
-        if not ax:
-            ax = plt.gca()
-
-        ys = self.__getattribute__(show)
-
-        lines = [ax.plot(self.position, y, **kwargs)[0] for y in ys]
-
-        return lines
