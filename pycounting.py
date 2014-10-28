@@ -7,7 +7,7 @@ import glob
 import matplotlib.pyplot as plt
 from cdetector import digitize as _digitize
 from itertools import product
-import h5py
+#import h5py
 
 
 def tc(sampling_rate, timestr='s'):
@@ -107,6 +107,10 @@ class Hdf5Base(object):
         return self._dataset.dtype
 
     @property
+    def keys(self):
+        return self.dtype.names
+
+    @property
     def attrs(self):
         """Access the attributes.
 
@@ -172,7 +176,7 @@ class Trace(object):
             self._dtype = np.dtype(np.ushort)
         else:
             self._dtype = self._datatype
-            #raise TypeError('Unsupported datatype')
+            # raise TypeError('Unsupported datatype')
 
         self._datapointsize = self._dtype.itemsize
 
@@ -585,48 +589,64 @@ class LevelTrace(Hdf5Base):
     """
 
     @classmethod
-    def create(cls, hdf5_file, dataset_string, start_parameters):
+    def create(cls, hdf5_file, key, nr_of_levels, time_constant):
 
         # Define dtype
         type_list = list()
-        for nr in range(len(start_parameters) / 3):
+        for nr in range(nr_of_levels):
             type_list += [('hight' + str(nr), np.float32),
                           ('center' + str(nr), np.float32),
                           ('sigma' + str(nr), np.float32)]
         dtype = np.dtype(type_list)
 
         # Create dataset
-        dset = hdf5_file.create_dataset(dataset_string, shape=(0,),
+        dset = hdf5_file.create_dataset(key, shape=(0,),
                                         dtype=dtype, maxshape=(None,))
 
         # Create signal instance and append undifined level
         level_trace = cls(dset)
-        level_trace.start_parameters = start_parameters
-
+        level_trace.attrs['time_constant'] = time_constant
         return level_trace
 
-    def fit(self, histogram):
+    @property
+    def time_constant(self):
+        return self.attrs['time_constant']
+
+    @time_constant.setter
+    def time_constant(self, time_constant):
+        self.attrs['time_constant'] = time_constant
+
+    def fit(self, histogram, start_parameters):
         """Fit levels
 
         """
         # Fit with last parameters
-        system, fit = System.from_histogram(histogram, self.start_parameters)
+        system, fit = System.from_histogram(histogram, start_parameters)
 
         # Store parameters
-        self.start_parameters = fit.parameters
         self.append(tuple(fit.parameters))
 
         # Return current system and fit
         return system, fit
 
-    def plot(self, show='center', ax=None, **kwargs):
+    def plot(self, show, ax=None, **kwargs):
 
+        # Put show strings into list
+        show_list = list()
+        if isinstance(show, str):
+            show_list.append(show)
+        else:
+            show_list = show
+
+        # Get current axes if not provided
         if not ax:
             ax = plt.gca()
 
-        ys = self.__getattribute__(show)
+        # Get y values
+        ys = [self.__getitem__(key) for key in show_list]
 
-        lines = [ax.plot(self.position, y, **kwargs)[0] for y in ys]
+        # Plot everything
+        lines = [ax.plot(y, **kwargs)[0] for y in ys]
 
         return lines
 
@@ -655,11 +675,13 @@ class Signal(Hdf5Base):
         # Create signal instance and append undifined level
         signal = cls(dset)
         signal.append((-1, 0, 0))
-
         return signal
 
 
 class Histogram(object):
+    """Histogram class.
+
+    """
 
     def __init__(self, bins=1000, width=None, data=None):
         if data is None:
@@ -1137,5 +1159,3 @@ class Fit(object):
             line = ax.plot(self.__call__(x), x, **kwargs)
 
         return line
-
-
