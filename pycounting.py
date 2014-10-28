@@ -129,6 +129,18 @@ class Hdf5Base(object):
         self._dataset[size0:size1] = data
 
 
+def trace_to_hdf(trace, hdf_file, dataset_string, length=100e3):
+
+    length = int(length)
+    dset = hdf_file.create_dataset(dataset_string, dtype=trace._dtype,
+                                   shape=(len(trace),))
+
+    position = 0
+    for window in trace.windows(length, start=0, stop=len(trace)):
+        dset[position:position+length] = window
+        position += length
+
+
 class Trace(object):
     """Handle binary counting data files very flexible.
 
@@ -159,7 +171,8 @@ class Trace(object):
         elif self._datatype == 'ushort':
             self._dtype = np.dtype(np.ushort)
         else:
-            raise TypeError('Unsupported datatype')
+            self._dtype = self._datatype
+            #raise TypeError('Unsupported datatype')
 
         self._datapointsize = self._dtype.itemsize
 
