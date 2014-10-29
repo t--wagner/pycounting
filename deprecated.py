@@ -2,6 +2,269 @@
 
 from collections import defaultdict
 import numpy as np
+from matplotlib import pyplot as plt
+import glob
+import pycounting as pyc
+from os.path import getsize
+
+
+def list_filenames(pathname):
+    """List of sorted filenames in path, based on pattern.
+
+    """
+    files = glob.glob(pathname)
+    return sorted(files)
+
+
+class BinaryTrace(object):
+    """Handle binary counting data files very flexible.
+
+    """
+
+    def __init__(self, files, datatype, samplerate):
+
+        self._samplerate = samplerate
+
+        if isinstance(files, (list, tuple)):
+            self._files = list(files)
+        else:
+            self._files = list_filenames(files)
+
+        # Open all datafiles in readable binary mode
+        self._fileobjs = []
+        for filename in self._files:
+            self._fileobjs.append(open(filename, 'rb'))
+
+        # Set position to first file
+        self._fileobj = self._fileobjs[0]
+
+        # Store the datatype information
+        self._datatype = datatype
+
+        if self._datatype in ['int', 'int32']:
+            self._dtype = np.dtype(np.int32)
+        elif self._datatype == 'ushort':
+            self._dtype = np.dtype(np.ushort)
+        else:
+            self._dtype = self._datatype
+            # raise TypeError('Unsupported datatype')
+
+        self._datapointsize = self._dtype.itemsize
+
+        # Calculate the size in bytes of all files
+        self._datasize = sum(getsize(fname) for fname in self._files)
+
+        # Calculate the start and stop positions the files
+        self._file_start_positions = []
+        self._file_stop_positions = []
+        position = 0
+        for filename in self._files:
+            self._file_start_positions.append(position)
+            position += getsize(filename) / self._datapointsize
+            self._file_stop_positions.append(position)
+
+    def __del__(self):
+        """Close all datafiles.
+
+        """
+        for fileobj in self._fileobjs:
+            fileobj.close()
+
+    def __len__(self):
+        """The number of datapoints.
+
+        """
+        return self._file_stop_positions[-1]
+
+    def __getitem__(self, key):
+        """Return numpy array between start and stop.
+
+        """
+        if isinstance(key, slice):
+            # Unpack slice and handle values in slice
+            start = int(key.start) if key.start else 0
+            stop = int(key.stop) if key.stop else self.__len__()
+            step = int(key.step) if key.step else 1
+
+            # Handle negative positions
+            start = self._tpos(start)
+            stop = self._tpos(stop)
+
+            # Set position
+            self.position = int(start)
+
+            # Return window
+            return self.next(stop - start)[::step]
+        elif isinstance(key, int):
+            self.position = key
+            return self.next()
+        else:
+            raise TypeError('Trace indices must be integers, not ' +
+                            type(key).__name__)
+
+    def __iter__(self):
+        """Iterator over all trace.
+
+        """
+        self.position = 0
+        return self
+
+    @property
+    def files(self):
+        """List of filenames.
+
+        """
+        return self._files
+
+    def datasize(self, unit='gb'):
+        """The size of all files in MBytes.
+
+        """
+        if unit == 'gb':
+            divider = 1024 * 1024 * 1024
+        elif unit == 'mb':
+            divider = 1024 * 1024
+        elif unit == 'kb':
+            divider = 1024
+        elif unit == 'b':
+            divider = 1
+
+        return self._datasize / float(divider)
+
+    @property
+    def datatype(self):
+        """The datatype.
+
+        """
+        return self._datatype
+
+    def _tpos(self, position):
+        """Handle negative positions and check range.
+
+        Use this internal to handle input.
+        """
+
+        # Tranform negative position value
+        if position < 0:
+            position += self._file_stop_positions[-1]
+
+        # Raise IndexError if out of range
+        if ((position < 0) or (position > self._file_stop_positions[-1])):
+            raise IndexError('position out of range')
+
+        return position
+
+    @property
+    def position(self):
+        """Return the current datapoint position.
+
+        """
+
+        # Get the file index
+        file_index = self._fileobjs.index(self._fileobj)
+
+        # Get the start position of the file and current position
+        file_start_position = self._file_start_positions[file_index]
+        file_current_position = self._fileobj.tell() / self._datapointsize
+
+        return file_start_position + file_current_position
+
+    @position.setter
+    def position(self, position):
+        """Set the current datapoint position.
+
+        """
+
+        # Make sure the position is valid positive number
+        position = self._tpos(position)
+
+        # Check if position is valid otherwise raise IndexError
+        if ((position < 0) or (position > self._file_stop_positions[-1])):
+            raise IndexError('position out of range')
+
+        # Find the file wich belongs to the position
+        for index, stopposition in enumerate(self._file_stop_positions):
+            if position < stopposition:
+                # Set the corresponding fileobj
+                self._fileobj = self._fileobjs[index]
+                break
+
+        # Set the new positon
+        datapoint_nr = position - self._file_start_positions[index]
+        file_position = datapoint_nr * self._datapointsize
+        self._fileobj.seek(file_position, 0)
+
+    def next(self, length=1):
+        """Return np.array with next datapoints of trace.
+
+        """
+
+        # Every other data method uses this next_window method
+
+        # Get the array of length
+        length = int(length)
+        data = np.fromfile(self._fileobj, self._dtype, length)
+
+        # Check array size to find end of file
+        rest = length - data.size
+        if rest:
+            # Update position for next file
+            self.position = self.position
+            data = np.append(data,
+                             np.fromfile(self._fileobj, self._dtype, rest))
+
+        return data
+
+    def windows(self, length, start=0, stop=None, nr=None):
+        """Iterator over windows of length.
+
+        """
+
+        if start is not None:
+            start = self._tpos(start)
+            self.position = int(start)
+
+        if stop is None:
+            stop = self._file_stop_positions[-1]
+        stop = self._tpos(stop)
+
+        if nr is not None:
+            # Window number defined
+            for nr in xrange(nr):
+                yield self.next(length)
+        else:
+            # Stop position defined
+            while self.position + length <= stop:
+                yield self.next(length)
+
+    def plot(self, start, stop, step=1, ax=None, **kwargs):
+
+        if not ax:
+            ax = plt.gca()
+
+        x = np.arange(start, stop, step)
+        y = self.__getitem__(slice(start, stop, step))
+
+        return ax.plot(x, y, **kwargs)
+
+
+def binary_to_hdf(trace, hdf_file, dataset_string, sampling_rate,
+                  bit, wlength=100e3):
+
+    wlength = int(wlength)
+    dset = hdf_file.create_dataset(dataset_string, dtype=trace._dtype,
+                                   shape=(len(trace),))
+    hdf = pyc.Trace(dset)
+    hdf.sampling_rate = sampling_rate
+    hdf.bit = bit
+
+    # Copy binary trace to HDF5 dataset
+    position = 0
+    for window in trace.windows(wlength, start=0, stop=len(trace)):
+        hdf[position:position+wlength] = window
+        position += wlength
+
+    return hdf
 
 
 class Signal(object):
