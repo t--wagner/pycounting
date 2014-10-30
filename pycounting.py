@@ -64,30 +64,36 @@ class Hdf5Base(object):
     """
 
     def __init__(self, dataset):
-        self._dataset = dataset
+        self.dataset = dataset
 
     def __getitem__(self, key):
-        return self._dataset[key]
+
+        # Handle floating point slice numbers
+        if isinstance(key, slice):
+            start = int(key.start) if key.start else None
+            stop = int(key.stop) if key.stop else None
+            step = int(key.step) if key.step else None
+
+            # Pack new slice with integer values
+            key = slice(start, stop, step)
+
+        return self.dataset[key]
 
     def __setitem__(self, key, value):
-        self._dataset[key] = value
+        self.dataset[key] = value
 
     def __len__(self):
         """Number of levels.
 
         """
-        return self._dataset.size
-
-    @property
-    def chunks(self):
-        return self._dataset.chunks
+        return self.dataset.size
 
     @property
     def dtype(self):
         """Datatpye of the signal.
 
         """
-        return self._dataset.dtype
+        return self.dataset.dtype
 
     @property
     def keys(self):
@@ -106,7 +112,7 @@ class Hdf5Base(object):
         """Access the attributes.
 
         """
-        return self._dataset.attrs
+        return self.dataset.attrs
 
     def append(self, data):
         """Append new data at the end of signal.
@@ -118,18 +124,20 @@ class Hdf5Base(object):
         # Resize the dataset
         size0 = self.__len__()
         size1 = data.size + size0
-        self._dataset.resize((size1,))
+        self.dataset.resize((size1,))
 
         # Insert new data
-        self._dataset[size0:size1] = data
+        self.dataset[size0:size1] = data
 
-    def windows(self, length, start=0, stop=None):
+    def windows(self, length, start=0, stop=None, nr=None):
         """Iterator over windows of length.
 
         """
 
         # Set stop to the end of dataset
-        if stop is None:
+        if nr is not None:
+            stop = int(start + nr * length)
+        elif stop is None:
             stop = self.__len__()
 
         # Make everything integers of xrange and slice
@@ -164,6 +172,19 @@ class Trace(Hdf5Base):
     @sampling_rate.setter
     def sampling_rate(self, sampling_rate):
         self.attrs['sampling_rate'] = sampling_rate
+
+    def length(self, unit='m'):
+        """Get the time length of the trace for unit.
+
+        """
+        if unit == 's':
+            factor = 1
+        elif unit == 'm':
+            factor = 60
+        elif unit == 'h':
+            factor = 60 * 60
+
+        return self.__len__() / float(self.sampling_rate * factor)
 
     def plot(self, start, stop, step=1, ax=None, **kwargs):
 
@@ -450,6 +471,135 @@ class LevelTrace(Hdf5Base):
         return lines
 
 
+class FFT(object):
+    """Fast Fourier Transformation object.
+
+    """
+
+    def __init__(self, values=None, freqs=None, samples=1, sample_rate=1):
+
+        self.values = values
+        self.freqs = freqs
+        self.samples = samples
+        self.sample_rate = float(sample_rate)
+
+    @classmethod
+    def from_data(cls, data, sample_rate=1):
+        """Create new FFT instance and transform data.
+
+        """
+        data = np.array(data, copy=False)
+        values = cls.transform(data)
+        freqs = np.fft.rfftfreq(data.size, d=1 / float(sample_rate))
+        samples = data.size
+
+        return cls(values, freqs, samples, sample_rate)
+
+    @classmethod
+    def from_hdf(cls, dataset):
+        """Create FFT instance from dataset.
+
+        """
+        freqs = dataset['freqs']
+        values = dataset['fft']
+        samples = dataset.attrs['samples']
+        sample_rate = dataset.attrs['sample_rate']
+        return cls(freqs, values, samples, sample_rate)
+
+    def to_hdf(self, hdf5_file, dataset_key):
+        # Create compound datatype
+        fft_dtype = np.dtype([('freqs', self.freqs.dtype),
+                              ('values', self.values.dtype)])
+
+        # Fill array values with data
+        ary = np.empty(shape=self.__len__(), dtype=fft_dtype)
+        ary['freqs'] = self.freqs
+        ary['values'] = self.values
+
+        # Data to hdf5
+        dset = hdf5_file.create_dataset(dataset_key, data=ary)
+        dset.attrs['samples'] = self.samples
+        dset.attrs['sample_rate'] = self.sample_rate
+
+    def transform(self, data):
+        data = np.array(data, copy=False)
+        values = np.fft.rfft(data)
+
+        try:
+            self.values += values
+            self.samples += data.size
+        except TypeError:
+            self.values = values
+            self.freqs = np.fft.rfftfreq(data.size,
+                                         d=1 / float(self.sample_rate))
+            self.samples = data.size
+
+    def __len__(self):
+        return self.freqs.size
+
+    @property
+    def abs(self):
+        return np.absolute(self.values)
+
+    @property
+    def abs_n(self):
+        return self.abs / np.sqrt(self.samples)
+
+    @property
+    def real(self):
+        return np.real(self.values)
+
+    @property
+    def real_n(self):
+        return self.real / float(self.samples)
+
+    @property
+    def imag(self):
+        return np.imag(self.values)
+
+    @property
+    def imag_n(self):
+        return self.imag / float(self.samples)
+
+    @property
+    def angle(self):
+        return np.angle(self.values)
+
+    @property
+    def power(self):
+        return self.abs**2
+
+    @property
+    def power_n(self):
+        return self.abs_n**2
+
+    def plot(self, ax=None, show='abs_n', range=(5e3, np.inf),
+             order=1e3, log=False, **kwargs):
+        """Plot the fft spectrum in range.
+
+        """
+        if not ax:
+            ax = plt.gca()
+
+        # Get data
+        values = self.__getattribute__(show)
+        freqs = self.freqs / float(order)
+
+        # Plot data range
+        index = (self.freqs > range[0]) & (self.freqs < range[1])
+        line = ax.plot(freqs[index], values[index], **kwargs)
+
+        # Log everything
+        if log:
+            ax.set_yscale('log')
+
+        # Set axis label
+        ax.set_ylabel(show)
+        ax.set_xlabel('frequency / ' + str(order))
+
+        return line
+
+
 class Signal(Hdf5Base):
     """Counting Signal class.
 
@@ -567,10 +717,8 @@ class Histogram(object):
 
         if not inverted:
             line = ax.plot(self.bins, y, **kwargs)
-            # line = ax.step(self.bins, y, where='mid', **kwargs)
         else:
             line = ax.plot(y, self.bins, **kwargs)
-            # line = ax.step(y, self.bins, where='mid', **kwargs)
 
         return line
 
@@ -586,7 +734,7 @@ class Time(Histogram):
 
         # Get all times of state from signal
         if signal is not None:
-            times = signal['length'][signal.state == self._state]
+            times = signal['length'][signal['state'] == self._state]
             Histogram.__init__(self, bins, width, times)
         else:
             Histogram.__init__(self, bins=bins, width=width)
@@ -595,7 +743,7 @@ class Time(Histogram):
         """Add time to signal.
 
         """
-        times = signal['length'][signal.state == self.state]
+        times = signal['length'][signal['state'] == self.state]
         Histogram.add(self, times)
 
     def fit_exp(self, a=None, rate=None, normed=True):
@@ -746,101 +894,6 @@ def multi(detectors, nr_of_states=2):
     return mdetector, msignal
 
 
-class FFT(object):
-
-    def __init__(self, data=None, samplerate=1):
-
-        self._samplerate = samplerate
-
-        if data is not None:
-            self.transform(data)
-
-    def transform(self, data):
-        data = np.array(data, copy=False)
-        fft = np.fft.rfft(data)
-
-        try:
-            self._fft += fft
-            self._samples += data.size
-        except AttributeError:
-            self._fft = fft
-            self._freq = np.fft.rfftfreq(data.size,
-                                         d=1/float(self._samplerate))
-            self._samples = data.size
-
-    @property
-    def samplerate(self):
-        return self._samplerate
-
-    @property
-    def samples(self):
-        return self._samples
-
-    @property
-    def freq(self):
-        return self._freq
-
-    @property
-    def abs(self):
-        return np.absolute(self._fft)
-
-    @property
-    def abs_n(self):
-        return self.abs / np.sqrt(self._samples)
-
-    @property
-    def real(self):
-        return np.real(self._fft)
-
-    @property
-    def real_n(self):
-        return self.real / float(self._samples)
-
-    @property
-    def imag(self):
-        return np.imag(self._fft)
-
-    @property
-    def imag_n(self):
-        return self.imag / float(self._samples)
-
-    @property
-    def angle(self):
-        return np.angle(self._fft)
-
-    @property
-    def power(self):
-        return self.abs**2
-
-    @property
-    def power_n(self):
-        return self.abs_n**2
-
-    def plot(self, ax=None, show='abs_n', range=(5e3, np.inf),
-             order=1e3, log=False, **kwargs):
-        """Plot the fft spectrum in range.
-
-        """
-        if not ax:
-            ax = plt.gca()
-
-        # Get data
-        fft = self.__getattribute__(show)
-        freq = self._freq / float(order)
-
-        # Plot data range
-        index = (self.freq > range[0]) & (self.freq < range[1])
-        line = ax.plot(freq[index], fft[index], **kwargs)
-
-        # Log everything
-        if log:
-            ax.set_yscale('log')
-
-        # Set axis label
-        ax.set_ylabel(show)
-        ax.set_xlabel('frequency / ' + str(order))
-
-        return line
 
 
 def flinear(x, m=1, y0=0):
