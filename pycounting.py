@@ -72,8 +72,8 @@ class Hdf5Base(object):
         self.dataset = dataset
 
     @staticmethod
-    def create(cls, hdf5_file, dataset_key, date=None, comment=None,
-               **dset_kwargs):
+    def create(cls, hdf5_file, dataset_key, date=None, contact=None,
+               comment=None, **dset_kwargs):
         """Create a new HDF5 dataset and initalize Hdf5Base.
 
         """
@@ -83,11 +83,14 @@ class Hdf5Base(object):
             date = datetime.datetime.now().strftime('%Y/%m/%d %H:%M:%S')
         if comment is None:
             comment = ''
+        if contact is None:
+            contact = 'Timo Wagner'
 
         # Initalize Hdf5Base instance with new dataset
         hdf5base = cls(hdf5_file.create_dataset(dataset_key, **dset_kwargs))
         hdf5base.date = date
         hdf5base.comment = comment
+        hdf5base.contact = contact
 
         # Return
         return hdf5base
@@ -116,19 +119,23 @@ class Hdf5Base(object):
 
     @property
     def date(self):
-        return self.attrs['date']
+        return self.dataset.attrs['date']
 
     @date.setter
     def date(self, date):
-        self.attrs['date'] = date
+        self.dataset.attrs['date'] = date
+
+    @property
+    def contact(self):
+        return self.dataset.attrs['contact']
 
     @property
     def comment(self):
-        return self.attrs['comment']
+        return self.dataset.attrs['comment']
 
     @comment.setter
     def comment(self, comment):
-        self.attrs['comment'] = comment
+        self.dataset.attrs['comment'] = comment
 
     @property
     def dtype(self):
@@ -136,13 +143,6 @@ class Hdf5Base(object):
 
         """
         return self.dataset.dtype
-
-    @property
-    def attrs(self):
-        """Access the attributes.
-
-        """
-        return self.dataset.attrs
 
     def append(self, data):
         """Append new data at the end of signal.
@@ -189,19 +189,19 @@ class Trace(Hdf5Base):
 
     @property
     def bit(self):
-        return self.attrs['bit']
+        return self.dataset.attrs['bit']
 
     @bit.setter
     def bit(self, bit):
-        self.attrs['bit'] = bit
+        self.dataset.attrs['bit'] = bit
 
     @property
     def sampling_rate(self):
-        return self.attrs['sampling_rate']
+        return self.dataset.attrs['sampling_rate']
 
     @sampling_rate.setter
     def sampling_rate(self, sampling_rate):
-        self.attrs['sampling_rate'] = sampling_rate
+        self.dataset.attrs['sampling_rate'] = sampling_rate
 
     def length(self, unit='m'):
         """Get the time length of the trace for unit.
@@ -440,7 +440,7 @@ class LevelTrace(Hdf5Base):
 
     @classmethod
     def create(cls, hdf5_file, dataset_key, nr_of_levels, time_constant,
-               date=None, comment=None):
+               date=None, contact=None, comment=None):
 
         # Define dtype
         type_list = list()
@@ -452,8 +452,8 @@ class LevelTrace(Hdf5Base):
 
         # Create dataset
         level_trace = Hdf5Base.create(cls, hdf5_file, dataset_key, date,
-                                      comment, shape=(0,), dtype=dtype,
-                                      maxshape=(None,))
+                                      contact, comment, shape=(0,),
+                                      dtype=dtype, maxshape=(None,))
 
         # Create signal instance and append undifined level
         level_trace.time_constant = time_constant
@@ -462,19 +462,19 @@ class LevelTrace(Hdf5Base):
 
     @property
     def time_constant(self):
-        return self.attrs['time_constant']
+        return self.dataset.attrs['time_constant']
 
     @time_constant.setter
     def time_constant(self, time_constant):
-        self.attrs['time_constant'] = time_constant
+        self.dataset.attrs['time_constant'] = time_constant
 
     @property
     def nr_of_levels(self):
-        return self.attrs['nr_of_levels']
+        return self.dataset.attrs['nr_of_levels']
 
     @nr_of_levels.setter
     def nr_of_levels(self, nr_of_levels):
-        self.attrs['nr_of_levels'] = nr_of_levels
+        self.dataset.attrs['nr_of_levels'] = nr_of_levels
 
     @property
     def keys(self):
@@ -653,7 +653,8 @@ class Signal(Hdf5Base):
 
     @classmethod
     def create(cls, hdf5_file, dataset_key,
-               nr_of_levels, nsigma, average, date=None, comment=None,
+               nr_of_levels, nsigma, average, date=None, contact=None,
+               comment=None,
                state_type=np.int8,
                length_type=np.uint32,
                value_type=np.float32):
@@ -664,8 +665,9 @@ class Signal(Hdf5Base):
                           ('value', value_type)])
 
         # Initialize signal
-        signal = Hdf5Base.create(cls, hdf5_file, dataset_key, date, comment,
-                                 shape=(0,), dtype=dtype, maxshape=(None,))
+        signal = Hdf5Base.create(cls, hdf5_file, dataset_key,
+                                 date, contact, comment, shape=(0,),
+                                 dtype=dtype, maxshape=(None,))
 
         # Create signal instance and append undifined level
         signal.append((-1, 0, 0))
@@ -680,22 +682,23 @@ class Signal(Hdf5Base):
 
     @property
     def nr_of_levels(self):
-        return self.attrs['nr_of_levels']
+        return self.dataset.attrs['nr_of_levels']
 
     @nr_of_levels.setter
     def nr_of_levels(self, nr_of_levels):
-        self.attrs['nr_of_levels'] = nr_of_levels
+        self.dataset.attrs['nr_of_levels'] = nr_of_levels
 
     @property
     def nsigma(self):
-        return self.attrs['nsigma']
+        return self.dataset.attrs['nsigma']
 
     @nsigma.setter
     def nsigma(self, nsigma):
-        self.attrs['nsigma'] = nsigma
+        self.dataset.attrs['nsigma'] = nsigma
 
     def plot(self):
         pass
+
 
 class Histogram(object):
     """Histogram class.
