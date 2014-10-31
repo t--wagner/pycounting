@@ -7,6 +7,7 @@ import matplotlib.pyplot as plt
 from cdetector import digitize as _digitize
 from itertools import product
 import datetime
+import h5py
 
 
 def current_time(format='%Y/%m/%d %H:%M:%S'):
@@ -58,6 +59,10 @@ def list_filenames(pathname):
     return sorted(files)
 
 
+def Hdf5File(*args, **kwargs):
+    return h5py.File(*args, **kwargs)
+
+
 class Hdf5Base(object):
     """Hdf5 base class.
 
@@ -65,6 +70,27 @@ class Hdf5Base(object):
 
     def __init__(self, dataset):
         self.dataset = dataset
+
+    @staticmethod
+    def create(cls, hdf5_file, dataset_key, date=None, comment=None,
+               **dset_kwargs):
+        """Create a new HDF5 dataset and initalize Hdf5Base.
+
+        """
+
+        if date is None:
+            # Standart date format '2014/10/31 14:25:57'
+            date = datetime.datetime.now().strftime('%Y/%m/%d %H:%M:%S')
+        if comment is None:
+            comment = ''
+
+        # Initalize Hdf5Base instance with new dataset
+        hdf5base = cls(hdf5_file.create_dataset(dataset_key, **dset_kwargs))
+        hdf5base.date = date
+        hdf5base.comment = comment
+
+        # Return
+        return hdf5base
 
     def __getitem__(self, key):
 
@@ -89,23 +115,27 @@ class Hdf5Base(object):
         return self.dataset.size
 
     @property
-    def dtype(self):
-        """Datatpye of the signal.
-
-        """
-        return self.dataset.dtype
-
-    @property
-    def keys(self):
-        return self.dtype.names
-
-    @property
     def date(self):
         return self.attrs['date']
 
     @date.setter
     def date(self, date):
         self.attrs['date'] = date
+
+    @property
+    def comment(self):
+        return self.attrs['comment']
+
+    @comment.setter
+    def comment(self, comment):
+        self.attrs['comment'] = comment
+
+    @property
+    def dtype(self):
+        """Datatpye of the signal.
+
+        """
+        return self.dataset.dtype
 
     @property
     def attrs(self):
@@ -409,7 +439,8 @@ class LevelTrace(Hdf5Base):
     """
 
     @classmethod
-    def create(cls, hdf5_file, key, nr_of_levels, time_constant):
+    def create(cls, hdf5_file, dataset_key, nr_of_levels, time_constant,
+               date=None, comment=None):
 
         # Define dtype
         type_list = list()
@@ -420,12 +451,13 @@ class LevelTrace(Hdf5Base):
         dtype = np.dtype(type_list)
 
         # Create dataset
-        dset = hdf5_file.create_dataset(key, shape=(0,),
-                                        dtype=dtype, maxshape=(None,))
+        level_trace = Hdf5Base.create(cls, hdf5_file, dataset_key, date,
+                                      comment, shape=(0,), dtype=dtype,
+                                      maxshape=(None,))
 
         # Create signal instance and append undifined level
-        level_trace = cls(dset)
-        level_trace.attrs['time_constant'] = time_constant
+        level_trace.time_constant = time_constant
+        level_trace.nr_of_levels = nr_of_levels
         return level_trace
 
     @property
@@ -435,6 +467,18 @@ class LevelTrace(Hdf5Base):
     @time_constant.setter
     def time_constant(self, time_constant):
         self.attrs['time_constant'] = time_constant
+
+    @property
+    def nr_of_levels(self):
+        return self.attrs['nr_of_levels']
+
+    @nr_of_levels.setter
+    def nr_of_levels(self, nr_of_levels):
+        self.attrs['nr_of_levels'] = nr_of_levels
+
+    @property
+    def keys(self):
+        return self.dtype.names
 
     def fit(self, histogram, start_parameters):
         """Fit levels
@@ -608,24 +652,50 @@ class Signal(Hdf5Base):
     """
 
     @classmethod
-    def create_dataset(cls, hdf5_file, dataset_key, state_type=np.int8,
-                       length_type=np.uint32, value_type=np.float32, **kwargs):
+    def create(cls, hdf5_file, dataset_key,
+               nr_of_levels, nsigma, average, date=None, comment=None,
+               state_type=np.int8,
+               length_type=np.uint32,
+               value_type=np.float32):
 
         # Define dtype
         dtype = np.dtype([('state', state_type),
                           ('length', length_type),
                           ('value', value_type)])
 
-        # Create dataset
-        dset = hdf5_file.create_dataset(dataset_key, shape=(0,),
-                                        dtype=dtype, maxshape=(None,),
-                                        **kwargs)
+        # Initialize signal
+        signal = Hdf5Base.create(cls, hdf5_file, dataset_key, date, comment,
+                                 shape=(0,), dtype=dtype, maxshape=(None,))
 
         # Create signal instance and append undifined level
-        signal = cls(dset)
         signal.append((-1, 0, 0))
+        signal.nr_of_levels = nr_of_levels
+        signal.nsigma = nsigma
+        signal.average = average
         return signal
 
+    @property
+    def keys(self):
+        return self.dtype.names
+
+    @property
+    def nr_of_levels(self):
+        return self.attrs['nr_of_levels']
+
+    @nr_of_levels.setter
+    def nr_of_levels(self, nr_of_levels):
+        self.attrs['nr_of_levels'] = nr_of_levels
+
+    @property
+    def nsigma(self):
+        return self.attrs['nsigma']
+
+    @nsigma.setter
+    def nsigma(self, nsigma):
+        self.attrs['nsigma'] = nsigma
+
+    def plot(self):
+        pass
 
 class Histogram(object):
     """Histogram class.
@@ -892,8 +962,6 @@ def multi(detectors, nr_of_states=2):
     mdetector = MultiDetector(detectors)
     msignal = MultiSignal.from_product(nr=len(mdetector))
     return mdetector, msignal
-
-
 
 
 def flinear(x, m=1, y0=0):
