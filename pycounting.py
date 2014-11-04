@@ -129,6 +129,10 @@ class Hdf5Base(object):
     def contact(self):
         return self.dataset.attrs['contact']
 
+    @contact.setter
+    def contact(self, contact):
+        self.dataset.attrs['contact'] = contact
+
     @property
     def comment(self):
         return self.dataset.attrs['comment']
@@ -187,13 +191,14 @@ class Hdf5Base(object):
 
 class Trace(Hdf5Base):
 
-    @property
-    def bit(self):
-        return self.dataset.attrs['bit']
+    @classmethod
+    def create(cls, hdf_file, dataset_key, dtype, shape, sampling_rate, bit):
 
-    @bit.setter
-    def bit(self, bit):
-        self.dataset.attrs['bit'] = bit
+        trace = Hdf5Base.create(cls, hdf_file, dataset_key, dtype=dtype,
+                                shape=shape)
+        trace.bit = bit
+        trace.sampling_rate = sampling_rate
+        return trace
 
     @property
     def sampling_rate(self):
@@ -202,6 +207,14 @@ class Trace(Hdf5Base):
     @sampling_rate.setter
     def sampling_rate(self, sampling_rate):
         self.dataset.attrs['sampling_rate'] = sampling_rate
+
+    @property
+    def bit(self):
+        return self.dataset.attrs['bit']
+
+    @bit.setter
+    def bit(self, bit):
+        self.dataset.attrs['bit'] = bit
 
     def length(self, unit='m'):
         """Get the time length of the trace for unit.
@@ -487,6 +500,9 @@ class LevelTrace(Hdf5Base):
         # Fit with last parameters
         system, fit = System.from_histogram(histogram, start_parameters)
 
+        # Create only positive numbers
+        fit.parameters[2::3] = np.abs(fit.parameters[2::3])
+
         # Store parameters
         self.append(tuple(fit.parameters))
 
@@ -533,7 +549,7 @@ class FFT(object):
 
         """
         data = np.array(data, copy=False)
-        values = cls.transform(data)
+        values = np.fft.rfft(data)
         freqs = np.fft.rfftfreq(data.size, d=1 / float(sample_rate))
         samples = data.size
 
@@ -545,10 +561,10 @@ class FFT(object):
 
         """
         freqs = dataset['freqs']
-        values = dataset['fft']
+        values = dataset['values']
         samples = dataset.attrs['samples']
         sample_rate = dataset.attrs['sample_rate']
-        return cls(freqs, values, samples, sample_rate)
+        return cls(values, freqs, samples, sample_rate)
 
     def to_hdf(self, hdf5_file, dataset_key):
         # Create compound datatype
@@ -819,10 +835,11 @@ class Time(Histogram):
         times = signal['length'][signal['state'] == self.state]
         Histogram.add(self, times)
 
-    def fit_exp(self, a=None, rate=None, normed=True):
+    def fit_exp(self, a=None, rate=None, normed=False):
         """Fit the time Histogram with an exponential function.
 
         """
+
         if rate is None:
             rate = -1 * self.mean
 
@@ -839,7 +856,6 @@ class Time(Histogram):
         fit.rate = np.abs(fit.parameters[-1])
         return fit
 
-    @property
     def rate(self):
         """Rate extracted by the fit_exp method.
 
@@ -850,9 +866,9 @@ class Time(Histogram):
         """Create FFT from frequencies.
 
         """
-        return FFT(self.freqs, samplerate)
+        return FFT.from_data(self.freqs, samplerate)
 
-    def plot(self, ax=None, normed=True, log=True, **kwargs):
+    def plot(self, ax=None, normed=False, log=True, **kwargs):
         """Plot time distribution.
 
         """

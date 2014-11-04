@@ -248,23 +248,22 @@ class BinaryTrace(object):
         return ax.plot(x, y, **kwargs)
 
 
-def binary_to_hdf(trace, hdf_file, dataset_string, sampling_rate,
+def binary_to_hdf(btrace, hdf_file, dataset_key, sampling_rate,
                   bit, wlength=100e3):
 
     wlength = int(wlength)
-    dset = hdf_file.create_dataset(dataset_string, dtype=trace._dtype,
-                                   shape=(len(trace),))
-    hdf = pyc.Trace(dset)
-    hdf.sampling_rate = sampling_rate
-    hdf.bit = bit
+
+    htrace = pyc.Trace.create(hdf_file, dataset_key, dtype=btrace._dtype,
+                              shape=(len(btrace),),
+                              sampling_rate=sampling_rate, bit=bit)
 
     # Copy binary trace to HDF5 dataset
     position = 0
-    for window in trace.windows(wlength, start=0, stop=len(trace)):
-        hdf[position:position+wlength] = window
+    for window in btrace.windows(wlength, start=0, stop=len(btrace)):
+        htrace[position:position+wlength] = window
         position += wlength
 
-    return hdf
+    return htrace
 
 
 class Signal(object):
