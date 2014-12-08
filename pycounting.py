@@ -2,6 +2,7 @@
 
 import numpy as np
 from scipy.optimize import curve_fit
+from operator import itemgetter
 import glob
 import matplotlib.pyplot as plt
 from cdetector import digitize as _digitize
@@ -289,8 +290,10 @@ class Detector(object):
         low0, high0, low1, high1 = self.abs
 
         # CYTHON: Digitize the data
-        self._buffer = _digitize(data, signal, int(self.average),
-                                 low0, high0, low1, high1)
+        signal, self._buffer = _digitize(data, signal, int(self.average),
+                                         low0, high0, low1, high1)
+
+        return signal
 
     @property
     def abs(self):
@@ -382,12 +385,43 @@ class System(object):
         self.levels = levels
 
     @classmethod
-    def from_histogram(cls, histogram, start_parameters):
+    def from_histogram(cls, histogram, start_parameters=None, levels=2, sigma=1):
         """Create System from Histogram.
 
         start_parameters: (a_0, mu_0 sigma_0, .... a_N, mu_N, sigma_N)
         """
 
+        # Find start parameters from number of levels and noise width
+        if start_parameters is None:
+            start_parameters = list()
+
+            # Get number of bins
+            bins = histogram.bins
+            freqs_n = histogram.freqs_n
+
+            for peak in range(levels):
+                # Get maximum and its position
+                hight = np.max(freqs_n)
+                center = np.mean(bins[freqs_n == hight])
+
+                # Fit a normal distribution around the value
+                fit = Fit(fnormal, bins, freqs_n, (hight, center, sigma))
+                start_parameters.append(fit.parameters)
+
+                center = fit.parameters[1]
+                sigma = np.abs(fit.parameters[2])
+
+                # Substrate fit from data
+                freqs_n -= fit(bins)
+
+                index = ((bins < (center - sigma)) | ((center + sigma) < bins))
+                bins = bins[index]
+                freqs_n = freqs_n[index]
+
+        # Sort levels by position
+        start_parameters = sorted(start_parameters, key=itemgetter(1))
+
+        # Make a level fit
         fit = Fit(flevels, histogram.bins, histogram.freqs_n, start_parameters)
 
         # Filter levels=(mu_0, sigma_0, ..., mu_N, sigma_N)
@@ -536,15 +570,17 @@ class FFT(object):
 
     """
 
-    def __init__(self, values=None, freqs=None, samples=1, sample_rate=1):
+    def __init__(self, values=None, freqs=None, samples=0, sample_rate=1,
+                 average=True):
 
         self.values = values
         self.freqs = freqs
         self.samples = samples
         self.sample_rate = float(sample_rate)
+        self.average = average
 
     @classmethod
-    def from_data(cls, data, sample_rate=1):
+    def from_data(cls, data, sample_rate=1, average=True):
         """Create new FFT instance and transform data.
 
         """
@@ -553,7 +589,7 @@ class FFT(object):
         freqs = np.fft.rfftfreq(data.size, d=1 / float(sample_rate))
         samples = data.size
 
-        return cls(values, freqs, samples, sample_rate)
+        return cls(values, freqs, samples, sample_rate, average)
 
     @classmethod
     def from_hdf(cls, dataset):
@@ -564,7 +600,9 @@ class FFT(object):
         values = dataset['values']
         samples = dataset.attrs['samples']
         sample_rate = dataset.attrs['sample_rate']
-        return cls(values, freqs, samples, sample_rate)
+        average = dataset.attrs['average']
+
+        return cls(values, freqs, samples, sample_rate, average)
 
     def to_hdf(self, hdf5_file, dataset_key):
         # Create compound datatype
@@ -580,6 +618,7 @@ class FFT(object):
         dset = hdf5_file.create_dataset(dataset_key, data=ary)
         dset.attrs['samples'] = self.samples
         dset.attrs['sample_rate'] = self.sample_rate
+        dset.attrs['average'] = self.average
 
     def transform(self, data):
         data = np.array(data, copy=False)
@@ -828,14 +867,16 @@ class Time(Histogram):
         else:
             Histogram.__init__(self, bins=bins, width=width)
 
-    def add(self, signal):
+    def add(self, times):
         """Add time to signal.
 
         """
-        times = signal['length'][signal['state'] == self.state]
+
+        if isinstance(times, Signal):
+            times = times['length'][times['state'] == self.state]
         Histogram.add(self, times)
 
-    def fit_exp(self, a=None, rate=None, normed=False):
+    def fit_exp(self, a=None, rate=None, range=None, normed=False):
         """Fit the time Histogram with an exponential function.
 
         """
@@ -852,15 +893,23 @@ class Time(Histogram):
                 a = self.max_freq
             freqs = self.freqs
 
-        fit = Fit.exp(self.bins, freqs, a, rate)
+        bins = self.bins
+
+        if range:
+            index = (range[0] <= bins) & (bins <= range[1])
+            bins = bins[index]
+            freqs = freqs[index]
+
+        fit = Fit.exp(bins, freqs, a, rate)
         fit.rate = np.abs(fit.parameters[-1])
         return fit
 
-    def rate(self):
+    def rate(self, sample_rate=500e3, range=None):
         """Rate extracted by the fit_exp method.
 
         """
-        return np.abs(self.fit_exp().parameters[-1])
+
+        return sample_rate / np.abs(self.fit_exp(range=range).parameters[-1])
 
     def fft(self, samplerate=1):
         """Create FFT from frequencies.
