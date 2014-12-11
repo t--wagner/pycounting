@@ -414,7 +414,7 @@ class System(object):
                 # Substrate fit from data
                 freqs_n -= fit(bins)
 
-                index = ((bins < (center - sigma)) | ((center + sigma) < bins))
+                index = ((bins < (center - 2 * sigma)) | ((center + 2 * sigma) < bins))
                 bins = bins[index]
                 freqs_n = freqs_n[index]
 
