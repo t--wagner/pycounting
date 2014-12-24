@@ -4,7 +4,7 @@ from Cython.Build import cythonize
 import numpy as np
 
 setup(
-    name = 'cdetector',
-    ext_modules = cythonize("cdetector.pyx"),
+    name = 'cycounting',
+    ext_modules = cythonize("cycounting.pyx"),
     include_dirs = [np.get_include()]
 )

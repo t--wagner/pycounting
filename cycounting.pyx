@@ -5,10 +5,13 @@ cimport numpy as np
 ctypedef fused datatype:
     unsigned short
     short
+    unsigned int
     int
+    unsigned long
     long
     float
     double
+
 
 def digitize(np.ndarray[datatype, ndim=1] trace,
              signal,
@@ -73,3 +76,22 @@ def digitize(np.ndarray[datatype, ndim=1] trace,
     # Return the buffer that is necassary to buffer
     new_signal[0] = (new_signal[0][0], new_signal[0][1] - first_level[1], new_signal[0][2])
     return new_signal, trace[-average:].copy()
+
+
+def count(np.ndarray[datatype, ndim=1] events,
+          datatype delta,
+          datatype offset,
+          unsigned long counts,
+          histogram):
+
+    cdef datatype event
+
+    for event in events:
+        if (offset <= event) and (event < offset + delta):
+            counts += 1
+        else:
+            offset += delta
+            histogram[counts] += 1
+            counts = 1
+
+    return offset, counts
