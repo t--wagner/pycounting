@@ -199,132 +199,6 @@ class Hdf5Base(object):
             yield self.__getitem__(slice(position, position+length))
 
 
-#class Hdf5Base(object):
-#    """Hdf5 base class.
-#
-#    """
-#
-#    def __init__(self, dataset):
-#        self.dataset = dataset
-#
-#    @staticmethod
-#    def create(cls, hdf5_file, dataset_key, date=None, contact=None,
-#               comment=None, **dset_kwargs):
-#        """Create a new HDF5 dataset and initalize Hdf5Base.
-#
-#        """
-#
-#        if date is None:
-#            # Standart date format '2014/10/31 14:25:57'
-#            date = datetime.datetime.now().strftime('%Y/%m/%d %H:%M:%S')
-#        if comment is None:
-#            comment = ''
-#        if contact is None:
-#            contact = 'Timo Wagner'
-#
-#        # Initalize Hdf5Base instance with new dataset
-#        hdf5base = cls(hdf5_file.create_dataset(dataset_key, **dset_kwargs))
-#        hdf5base.date = date
-#        hdf5base.comment = comment
-#        hdf5base.contact = contact
-#
-#        # Return
-#        return hdf5base
-#
-#    def __getitem__(self, key):
-#
-#        # Handle floating point slice numbers
-#        if isinstance(key, slice):
-#            start = int(key.start) if key.start else None
-#            stop = int(key.stop) if key.stop else None
-#            step = int(key.step) if key.step else None
-#
-#            # Pack new slice with integer values
-#            key = slice(start, stop, step)
-#
-#        return self.dataset[key]
-#
-#    def __setitem__(self, key, value):
-#        self.dataset[key] = value
-#
-#    def __len__(self):
-#        """Number of levels.
-#
-#        """
-#        return self.dataset.size
-#
-#    @property
-#    def date(self):
-#        return self.dataset.attrs['date']
-#
-#    @date.setter
-#    def date(self, date):
-#        self.dataset.attrs['date'] = date
-#
-#    @property
-#    def contact(self):
-#        return self.dataset.attrs['contact']
-#
-#    @contact.setter
-#    def contact(self, contact):
-#        self.dataset.attrs['contact'] = contact
-#
-#    @property
-#    def comment(self):
-#        return self.dataset.attrs['comment']
-#
-#    @comment.setter
-#    def comment(self, comment):
-#        self.dataset.attrs['comment'] = comment
-#
-#    @property
-#    def dtype(self):
-#        """Datatpye of the signal.
-#
-#        """
-#        return self.dataset.dtype
-#
-#    def append(self, data):
-#        """Append new data at the end of signal.
-#
-#        """
-#
-#        data = np.array(data, dtype=self.dtype, copy=False)
-#
-#        # Resize the dataset
-#        size0 = self.__len__()
-#        size1 = data.size + size0
-#        self.dataset.resize((size1,))
-#
-#        # Insert new data
-#        self.dataset[size0:size1] = data
-#
-#    def windows(self, length, start=0, stop=None, nr=None):
-#        """Iterator over windows of length.
-#
-#        """
-#
-#        # Set stop to the end of dataset
-#        if nr is not None:
-#            stop = int(start + nr * length)
-#        elif stop is None:
-#            stop = self.__len__()
-#
-#        # Make everything integers of xrange and slice
-#        length = int(length)
-#        start = int(start)
-#        stop = int(stop)
-#
-#        # Start iteration over data
-#        for position in xrange(start, stop, length):
-#            # Stop iteration if not enough datapoints available
-#            if stop < (position + length):
-#                return
-#
-#            # Return current data window
-#            yield self.__getitem__(slice(position, position+length))
-
-
 class Trace(Hdf5Base):
 
     @classmethod
@@ -542,6 +416,8 @@ class System(object):
 
         # Sort levels by position
         start_parameters = sorted(start_parameters, key=itemgetter(1))
+        start_parameters = np.concatenate(start_parameters)
+        #print start_parameters
 
         # Make a level fit
         fit = Fit(flevels, histogram.bins, histogram.freqs_n, start_parameters)
@@ -959,6 +835,7 @@ class Histogram(HistogramBase):
 
         """
         # Filter off empty frequency bins (necassary for fitting and plotting)
+        return self._freqs[self._freqs > 0]
 
 
 class Time(Histogram):
@@ -1073,6 +950,8 @@ class Counter(HistogramBase):
         if isinstance(signal, Signal):
             positions = self._position + np.cumsum(signal['length'])
             signal = positions[signal['state'] == self._state]
+        else:
+            signal = self._position + signal
 
         self._position = signal[-1]
 
