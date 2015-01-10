@@ -2,6 +2,7 @@
 
 import numpy as np
 from scipy.optimize import curve_fit
+from scipy.special import binom
 from operator import itemgetter
 import glob
 import matplotlib.pyplot as plt
@@ -11,8 +12,8 @@ import datetime
 from textwrap import dedent
 import h5py
 import abc
-from collections import defaultdict
-
+from collections import defaultdict, OrderedDict
+from itertools import izip
 
 def current_time(format='%Y/%m/%d %H:%M:%S'):
     return datetime.datetime.now().strftime(format)
@@ -728,12 +729,23 @@ class HistogramBase(object):
     __metaclass__ = abc.ABCMeta
 
     @abc.abstractproperty
-    def freqs(self):
+    def histogram(self):
         pass
 
-    @abc.abstractproperty
+    @property
     def bins(self):
-        pass
+        return self.histogram[0]
+
+    @property
+    def freqs(self):
+        return self.histogram[1]
+
+    @property
+    def items(self):
+        return zip(self.bins, self.freqs)
+
+    def __iter__(self):
+        return izip(self.bins, self.freqs)
 
     @property
     def elements(self):
@@ -750,24 +762,11 @@ class HistogramBase(object):
         return self.freqs / float(self.elements)
 
     @property
-    def values(self):
-        """Return pair of bins and frequencies.
-
-        """
-        return self.bins, self.freqs
-
-    @property
-    def values_n(self):
-        """Return pair of bins and normed frequencies.
-
-        """
-        return self.bins, self.freqs_n
-
-    @property
     def mean(self):
         """Calculate mean value of histogram.
 
         """
+        #return self.moment(1)
         return np.sum(self.freqs * self.bins) / float(self.elements)
 
     @property
@@ -794,6 +793,26 @@ class HistogramBase(object):
             line = ax.plot(y, self.bins, **kwargs)
 
         return line
+
+    def moment(self, n, c=0):
+        """Calculate the n-th moment of histogram about the value c.
+
+        """
+
+        # Make sure teh bins are float type
+        bins = np.array(self.bins, dtype=np.float, copy=False)
+        moment = np.sum(self.freqs * ((bins - c) ** n)) / self.elements
+        return moment
+
+    def moment_central(self, n):
+        """Calculate the n-th central moment of histogram.
+
+        """
+        return self.moment(n, self.mean)
+
+    def cumulants(self, n):
+        moments = self.moment(n)
+        return fcumulants(n), moments
 
 
 class Histogram(HistogramBase):
@@ -822,20 +841,12 @@ class Histogram(HistogramBase):
                                                    self._width)
 
     @property
-    def bins(self):
-        """Return bin values.
+    def histogram(self):
+        index = self._freqs > 0
+        bins = self._bins[:-1][index]
+        freqs = self._freqs[index]
 
-        """
-        # Filter off empty frequency bins (necassary for fitting and plotting)
-        return self._bins[:-1][self._freqs > 0]
-
-    @property
-    def freqs(self):
-        """Return frequencies.
-
-        """
-        # Filter off empty frequency bins (necassary for fitting and plotting)
-        return self._freqs[self._freqs > 0]
+        return bins, freqs
 
 
 class Time(Histogram):
@@ -936,12 +947,10 @@ class Counter(HistogramBase):
         return self._delta
 
     @property
-    def bins(self):
-        return np.array(self._histogram_dict.keys())
+    def histogram(self):
 
-    @property
-    def freqs(self):
-        return np.array(self._histogram_dict.values())
+        histogram = zip(*sorted(self._histogram_dict.items()))
+        return np.array(histogram[0]), np.array(histogram[1])
 
     def count(self, signal):
         """Count the states for signal.
@@ -956,7 +965,8 @@ class Counter(HistogramBase):
         self._position = signal[-1]
 
         # Count
-        self._offset, self._counts = _cycounting.count(signal, self._delta,
+        self._offset, self._counts = _cycounting.count(signal,
+                                                       self._delta,
                                                        self._offset,
                                                        self._counts,
                                                        self._histogram_dict)
@@ -1059,51 +1069,6 @@ class MultiTime(MultiBase):
             time.add(signal)
 
 
-def multi(detectors, nr_of_states=2):
-    mdetector = MultiDetector(detectors)
-    msignal = MultiSignal.from_product(nr=len(mdetector))
-    return mdetector, msignal
-
-
-def flinear(x, m=1, y0=0):
-    """Linear function.
-
-    """
-    x = np.array(x, copy=False)
-    return m * x + y0
-
-
-def fexp(x, a=1, tau=-1):
-    """Exponential function.
-    """
-    x = np.array(x, copy=False)
-    return a * np.exp(x / float(tau))
-
-
-def fnormal(x, a=1, mu=0, sigma=1):
-    """Normal distribution.
-
-    """
-    x = np.array(x, copy=False)
-    return a * np.exp(-(x - mu)**2 / (2. * sigma**2))
-
-
-def flevels(x, *parameters):
-    """Sum function of N differnt normal distributions.
-
-    parameters: (a_0, mu_0 sigma_0, .... a_N, mu_N, sigma_N)
-    """
-    x = np.array(x, copy=False)
-
-    # Create parameter triples (a_0, mu_0 sigma_0) ,... ,(a_N, mu_N, aigma_N)
-    triples = (parameters[i:i+3] for i in range(0, len(parameters), 3))
-
-    # (fnormal(x, a_0, mu_0 sigma_0) + ... + fnormal(x, a_0, mu_0 sigma_0)
-    summands = (fnormal(x, *triple) for triple in triples)
-
-    return np.sum(summands, 0)
-
-
 class Fit(object):
 
     def __init__(self, function, xdata, ydata, start_parameters):
@@ -1170,7 +1135,6 @@ class Fit(object):
         """Plot the fit function for x.
 
         """
-
         if not ax:
             ax = plt.gca()
 
@@ -1180,3 +1144,68 @@ class Fit(object):
             line = ax.plot(self.__call__(x), x, **kwargs)
 
         return line
+
+
+def multi(detectors, nr_of_states=2):
+    mdetector = MultiDetector(detectors)
+    msignal = MultiSignal.from_product(nr=len(mdetector))
+    return mdetector, msignal
+
+
+def flinear(x, m=1, y0=0):
+    """Linear function.
+
+    """
+    x = np.array(x, copy=False)
+    return m * x + y0
+
+
+def fexp(x, a=1, tau=-1):
+    """Exponential function.
+    """
+    x = np.array(x, copy=False)
+    return a * np.exp(x / float(tau))
+
+
+def fnormal(x, a=1, mu=0, sigma=1):
+    """Normal distribution.
+
+    """
+    x = np.array(x, copy=False)
+    return a * np.exp(-(x - mu)**2 / (2. * sigma**2))
+
+
+def flevels(x, *parameters):
+    """Sum function of N differnt normal distributions.
+
+    parameters: (a_0, mu_0 sigma_0, .... a_N, mu_N, sigma_N)
+    """
+    x = np.array(x, copy=False)
+
+    # Create parameter triples (a_0, mu_0 sigma_0) ,... ,(a_N, mu_N, aigma_N)
+    triples = (parameters[i:i+3] for i in range(0, len(parameters), 3))
+
+    # (fnormal(x, a_0, mu_0 sigma_0) + ... + fnormal(x, a_0, mu_0 sigma_0)
+    summands = (fnormal(x, *triple) for triple in triples)
+
+    return np.sum(summands, 0)
+
+
+def fcumulants(moments, n=None):
+    """Calculate the corresponding moments from cumulants.
+
+    """
+
+    cumulants = []
+
+    if n is None:
+        n = len(moments)
+    else:
+        n = int(n) + 1
+
+    for m in range(n):
+        cumulants.append(moments[m])
+        for k in range(m):
+            cumulants[m] -= binom(m - 1, k - 1) * cumulants[k] * moments[m - k]
+
+    return cumulants
