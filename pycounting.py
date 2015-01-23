@@ -12,7 +12,7 @@ import datetime
 from textwrap import dedent
 import h5py
 import abc
-from collections import defaultdict, OrderedDict
+from collections import defaultdict
 from itertools import izip
 
 def current_time(format='%Y/%m/%d %H:%M:%S'):
@@ -725,6 +725,10 @@ class Signal(Hdf5Base):
         pass
 
 
+class SignalClass(object):
+    pass
+
+
 class HistogramBase(object):
     __metaclass__ = abc.ABCMeta
 
@@ -788,9 +792,9 @@ class HistogramBase(object):
         y = self.freqs if not normed else self.freqs_n
 
         if not inverted:
-            line = ax.plot(self.bins, y, **kwargs)
+            line, = ax.plot(self.bins, y, **kwargs)
         else:
-            line = ax.plot(y, self.bins, **kwargs)
+            line, = ax.plot(y, self.bins, **kwargs)
 
         return line
 
@@ -810,9 +814,13 @@ class HistogramBase(object):
         """
         return self.moment(n, self.mean)
 
-    def cumulants(self, n):
-        moments = self.moment(n)
-        return fcumulants(n), moments
+    def cumulants(self, n, return_moments=False):
+
+        moments = [self.moment(i) for i in xrange(n)]
+        if return_moments:
+            return fcumulants(moments), moments
+        else:
+            return fcumulants(moments)
 
 
 class Histogram(HistogramBase):
@@ -1007,6 +1015,26 @@ class MultiBase(object):
 
     def __getitem__(self, key):
         return self._instances[key]
+
+
+class MultiCounter(MultiBase):
+
+    def __init__(self, counters):
+        MultiBase.__init__(self, instances=counters, cls=Counter)
+
+    @classmethod
+    def from_deltas(cls,state, deltas):
+        return cls([Counter(state, delta) for delta in deltas])
+
+    @classmethod
+    def from_range(cls, state, start, stop, step):
+        deltas = np.arange(start, stop, step)
+        return cls.from_deltas(state, deltas)
+
+    @classmethod
+    def from_linspace(cls, state, start, stop, points):
+        deltas = np.linspace(start, stop, points)
+        return cls.from_deltas(state, deltas)
 
 
 class MultiDetector(MultiBase):
