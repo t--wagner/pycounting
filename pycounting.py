@@ -15,6 +15,7 @@ import abc
 from collections import defaultdict
 from itertools import izip
 
+
 def current_time(format='%Y/%m/%d %H:%M:%S'):
     return datetime.datetime.now().strftime(format)
 
@@ -68,14 +69,66 @@ def Hdf5File(*args, **kwargs):
     return h5py.File(*args, **kwargs)
 
 
-class Hdf5Base(object):
+class CountingBase(object):
+    __metaclass__ = abc.ABCMeta
+
+    def __init__(self):
+        pass
+
+    @abc.abstractmethod
+    def __getitem__(self):
+        pass
+
+    @abc.abstractmethod
+    def __len__(self):
+        pass
+
+
+    def windows(self, length, start=0, stop=None, nr=None):
+        """Iterator over windows of length.
+
+        """
+
+        # Set stop to the end of dataset
+        if nr is not None:
+            stop = int(start + nr * length)
+        elif stop is None:
+            stop = self.__len__()
+
+        # Make everything integers of xrange and slice
+        length = int(length)
+        start = int(start)
+        stop = int(stop)
+
+        # Start iteration over data
+        for position in xrange(start, stop, length):
+            # Stop iteration if not enough datapoints available
+            if stop < (position + length):
+                return
+
+            # Return current data window
+            yield self.__getitem__(slice(position, position+length))
+
+class Hdf5Base(CountingBase):
     """Dynamic Hdf5 dataset class.
 
     """
 
-    def __init__(self, dataset):
+    def __init__(self, dataset, filename=None, *file_args, **file_kwargs):
+        if filename:
+            hdf_file = Hdf5File(filename, *file_args, **file_kwargs)
+            dataset = hdf_file[dataset]
+
+        CountingBase.__init__(self)
         self.__dict__['dataset'] = dataset
         self.__dict__['trim'] = True
+
+    # Context manager
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        self.close()
 
     @classmethod
     def create(cls, hdf5_file, dataset_key, date=None, contact=None,
@@ -145,6 +198,12 @@ class Hdf5Base(object):
         """
         return self.dataset.size
 
+    def close(self):
+        """Close file instance in which the dataset resides.
+
+        """
+        self.dataset.file.close()
+
     @property
     def dtype(self):
         """Datatpye of the signal.
@@ -173,31 +232,6 @@ class Hdf5Base(object):
 
         # Insert new data
         self.dataset[size0:size1] = data
-
-    def windows(self, length, start=0, stop=None, nr=None):
-        """Iterator over windows of length.
-
-        """
-
-        # Set stop to the end of dataset
-        if nr is not None:
-            stop = int(start + nr * length)
-        elif stop is None:
-            stop = self.__len__()
-
-        # Make everything integers of xrange and slice
-        length = int(length)
-        start = int(start)
-        stop = int(stop)
-
-        # Start iteration over data
-        for position in xrange(start, stop, length):
-            # Stop iteration if not enough datapoints available
-            if stop < (position + length):
-                return
-
-            # Return current data window
-            yield self.__getitem__(slice(position, position+length))
 
 
 class Trace(Hdf5Base):
@@ -685,12 +719,69 @@ class FFT(object):
         return line
 
 
-class Signal(Hdf5Base):
+class Signal(CountingBase):
+
+    def __init__(self, signal, start=0):
+        CountingBase.__init__(self)
+
+        self.data = signal
+        self.start = start
+
+    def __getitem__(self, key):
+        if isinstance(key, slice):
+            return Signal(self.data[key])
+        else:
+            return self.data[key]
+
+    def __len__(self):
+        return len(self.data)
+
+    def __repr__(self):
+        return repr(self.data)
+
+    def __str__(self):
+        return str(self.data)
+
+    @property
+    def state(self):
+        return self.data['state']
+
+    @property
+    def length(self):
+        return self.data['length']
+
+    @property
+    def value(self):
+        return self.data['value']
+
+    @property
+    def position(self):
+        return np.cumsum(self.start + self.length)
+
+    def append(self, signal):
+        self.data.append()
+
+    def plot(self, ax=None, **kwargs):
+
+        if not ax:
+            ax = plt.gca()
+
+        x = self.position
+        y = self.value
+
+        return ax.step(x, y, **kwargs)
+
+
+class SignalFile(Hdf5Base):
     """Counting Signal class.
 
     Signal uses the h5py module to store the data in HDF5 format.
 
     """
+
+    def __getitem__(self, key):
+        signal = Hdf5Base.__getitem__(self, key)
+        return Signal(signal)
 
     @classmethod
     def create(cls, hdf5_file, dataset_key,
@@ -723,10 +814,6 @@ class Signal(Hdf5Base):
 
     def plot(self):
         pass
-
-
-class SignalClass(object):
-    pass
 
 
 class HistogramBase(object):
@@ -991,36 +1078,54 @@ class CallableList(list):
 
 class MultiBase(object):
 
-    def __init__(self, instances, cls):
+    def __init__(self, cls, instances=[]):
         # Avoid __setattr__ call
-        self.__dict__['_instances'] = instances
+        self.__dict__['_instances'] = list(instances)
         self.__dict__['_methods'] = dir(cls)
 
     def __dir__(self):
         return self._methods
 
     def __iter__(self):
-        return iter(self._instances)
+        return iter(self.__dict__['_instances'])
 
     def __getattr__(self, name):
+        """Return a callable list.
+
+         First lookup in MultiClass and later in the instances.
+
+        """
         return CallableList([getattr(instance, name)
-                             for instance in self._instances])
+                            for instance in self.__iter__()])
 
     def __setattr__(self, name, value):
-        for instance in self._instances:
+        """Get attribute.
+
+        First lookup in MultiClass and later in the instances.
+
+        """
+        for instance in self.__dict__['_instances']:
             setattr(instance, name, value)
 
     def __len__(self):
         return len(self._instances)
 
+
     def __getitem__(self, key):
+        """x.__getitem__(key) <==> x[key]
+
+        """
         return self._instances[key]
+
+
+    def append(self, instance):
+        self.__dict__['_instances'].append(instance)
 
 
 class MultiCounter(MultiBase):
 
     def __init__(self, counters):
-        MultiBase.__init__(self, instances=counters, cls=Counter)
+        MultiBase.__init__(self, cls=Counter, instances=counters)
 
     @classmethod
     def from_deltas(cls,state, deltas):
@@ -1040,7 +1145,7 @@ class MultiCounter(MultiBase):
 class MultiDetector(MultiBase):
 
     def __init__(self, detectors):
-        MultiBase.__init__(self, instances=detectors, cls=Detector)
+        MultiBase.__init__(self, cls=Detector, instances=detectors)
 
     @classmethod
     def from_product(cls, average=[1], nsigma=[2], system=[None], factor=1):
@@ -1062,7 +1167,7 @@ class MultiDetector(MultiBase):
 class MultiSignal(MultiBase):
 
     def __init__(self, signals):
-        MultiBase.__init__(self, instances=signals, cls=Signal)
+        MultiBase.__init__(self, cls=Signal, instances=signals)
 
     @classmethod
     def from_product(cls, state, bin=[1000], width=[None], signal=[None],
@@ -1078,7 +1183,7 @@ class MultiSignal(MultiBase):
 class MultiTime(MultiBase):
 
     def __init__(self, times):
-        MultiBase.__init__(self, instances=times, cls=Time)
+        MultiBase.__init__(self, cls=Time, instances=times)
 
     @classmethod
     def from_product(cls, data=[None], start=[0], nr=1):
