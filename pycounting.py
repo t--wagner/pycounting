@@ -268,7 +268,9 @@ class Trace(Hdf5Base):
         x = np.arange(start, stop, step)
         y = self.__getitem__(slice(start, stop, step))
 
-        return ax.plot(x, y, **kwargs)
+        mpl_line2d, = ax.plot(x, y, **kwargs)
+
+        return mpl_line2d
 
 
 class Detector(object):
@@ -364,8 +366,8 @@ class Detector(object):
         if not ax:
             ax = plt.gca()
 
-        lines = [plt.axhline(value, **kwargs)[0] for value in self.abs]
-        return lines
+        mpl_lines2d = [plt.axhline(value, **kwargs)[0] for value in self.abs]
+        return mpl_lines2d
 
 
 class Level(object):
@@ -401,13 +403,13 @@ class Level(object):
             plt.sca(ax)
 
         if inverted:
-            lines = [plt.axhline(self.low, **kwargs),
-                     plt.axhline(self.high, **kwargs)]
+            mpl_lines2d = [plt.axhline(self.low, **kwargs),
+                           plt.axhline(self.high, **kwargs)]
         else:
-            lines = [plt.axvline(self.low, **kwargs),
-                     plt.axvline(self.high, **kwargs)]
+            mpl_lines2d = [plt.axvline(self.low, **kwargs),
+                           plt.axvline(self.high, **kwargs)]
 
-        return lines
+        return mpl_lines2d
 
 
 class System(object):
@@ -504,11 +506,11 @@ class System(object):
         else:
             plt.sca(ax)
 
-        lines = []
+        mpl_lines2d = []
         for level in self.levels:
-            lines += level.plot(ax, **kwargs)
+            mpl_lines2d += level.plot(ax, **kwargs)
 
-        return lines
+        return mpl_lines2d
 
 
 class LevelTrace(Hdf5Base):
@@ -580,9 +582,9 @@ class LevelTrace(Hdf5Base):
         ys = [self.__getitem__(key) for key in show_list]
 
         # Plot everything
-        lines = [ax.plot(y, **kwargs)[0] for y in ys]
+        mpl_lines2d = [ax.plot(y, **kwargs)[0] for y in ys]
 
-        return lines
+        return mpl_lines2d
 
 
 class FFT(object):
@@ -706,7 +708,7 @@ class FFT(object):
 
         # Plot data range
         index = (self.freqs > range[0]) & (self.freqs < range[1])
-        line = ax.plot(freqs[index], values[index], **kwargs)
+        mpl_line2d, = ax.plot(freqs[index], values[index], **kwargs)
 
         # Log everything
         if log:
@@ -716,15 +718,19 @@ class FFT(object):
         ax.set_ylabel(show)
         ax.set_xlabel('frequency / ' + str(order))
 
-        return line
+        return mpl_line2d
 
 
 class Signal(CountingBase):
 
-    def __init__(self, signal, start=0):
+    _key_state = 'state'
+    _key_length = 'length'
+    _key_value = 'value'
+
+    def __init__(self, data, start=0):
         CountingBase.__init__(self)
 
-        self.data = signal
+        self.data = data
         self.start = start
 
     def __getitem__(self, key):
@@ -744,32 +750,35 @@ class Signal(CountingBase):
 
     @property
     def state(self):
-        return self.data['state']
+        return self.data[self._key_state]
 
     @property
     def length(self):
-        return self.data['length']
+        return self.data[self._key_length]
 
     @property
     def value(self):
-        return self.data['value']
+        return self.data[self._key_value]
 
     @property
     def position(self):
         return np.cumsum(self.start + self.length)
 
-    def append(self, signal):
-        self.data.append()
-
-    def plot(self, ax=None, **kwargs):
+    def plot(self, state=False, ax=None, **kwargs):
 
         if not ax:
             ax = plt.gca()
 
         x = self.position
-        y = self.value
 
-        return ax.step(x, y, **kwargs)
+        if state:
+            y = self.state
+        else:
+            y = self.value
+
+        mpl_line2d, = ax.step(x, y, **kwargs)
+
+        return mpl_line2d
 
 
 class SignalFile(Hdf5Base):
@@ -780,8 +789,13 @@ class SignalFile(Hdf5Base):
     """
 
     def __getitem__(self, key):
+
         signal = Hdf5Base.__getitem__(self, key)
-        return Signal(signal)
+        
+        if isinstance(key, slice):
+            signal = Signal(signal)
+        
+        return signal
 
     @classmethod
     def create(cls, hdf5_file, dataset_key,
@@ -925,7 +939,7 @@ class Histogram(HistogramBase):
         else:
             self._freqs, self._bins = np.histogram(data, bins, width)
 
-    def add(self, data):
+    def append(self, data):
         """Add data to the histogram.
 
         """
@@ -934,6 +948,14 @@ class Histogram(HistogramBase):
         except TypeError:
             self._freqs, self._bins = np.histogram(data, self._bins,
                                                    self._width)
+
+    def insert(self, iteratable):
+        """Add data from iteratable to the histogram.
+
+        """
+
+        for data in iteratable:
+            self.append(data)
 
     @property
     def histogram(self):
@@ -960,14 +982,14 @@ class Time(Histogram):
         else:
             Histogram.__init__(self, bins=bins, width=width)
 
-    def add(self, times):
-        """Add time to signal.
+    def append(self, times):
+        """Add times.
 
         """
 
-        if isinstance(times, Signal):
-            times = times['length'][times['state'] == self.state]
-        Histogram.add(self, times)
+        if isinstance(times, (Signal, SignalFile)):
+            times = times.length[times.state == self.state]
+        Histogram.append(self, times)
 
     def fit_exp(self, a=None, rate=None, range=None, normed=False):
         """Fit the time Histogram with an exponential function.
@@ -1051,12 +1073,12 @@ class Counter(HistogramBase):
         """Count the states for signal.
 
         """
-        if isinstance(signal, Signal):
+        if isinstance(signal, (Signal, SignalFile)):
             positions = self._position + np.cumsum(signal['length'])
             signal = positions[signal['state'] == self._state]
         else:
             signal = self._position + signal
-
+        print signal
         self._position = signal[-1]
 
         # Count
@@ -1117,6 +1139,11 @@ class MultiBase(object):
         """
         return self._instances[key]
 
+    def save(self, file):
+        pass
+
+    def load(self, file):
+        pass
 
     def append(self, instance):
         self.__dict__['_instances'].append(instance)
@@ -1194,12 +1221,12 @@ class MultiTime(MultiBase):
                     for i in range(nr)
                     for values in product(data, start)])
 
-    def add(self, signals):
+    def append(self, signals):
         if not len(signals) == self.__len__():
             raise ValueError('Signal len does not fit.')
 
         for time, signal in zip(self.__iter__(), signals):
-            time.add(signal)
+            time.append(signal)
 
 
 class Fit(object):
