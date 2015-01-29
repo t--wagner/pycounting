@@ -1,19 +1,44 @@
 # -*- coding: utf-8 -*-
 
-import numpy as np
-from scipy.optimize import curve_fit
-from scipy.special import binom
-from operator import itemgetter
+import abc
+import os
 import glob
-import matplotlib.pyplot as plt
-import cycounting as _cycounting
-from itertools import product
+
+from itertools import izip, product
+from collections import defaultdict
+from operator import itemgetter
+
+import cPickle as pickle
 import datetime
 from textwrap import dedent
+
+import numpy as np
+import matplotlib.pyplot as plt
 import h5py
-import abc
-from collections import defaultdict
-from itertools import izip
+from scipy.optimize import curve_fit
+from scipy.special import binom
+
+import cycounting as _cycounting
+
+
+def create_file(filename, override=False):
+    """Create all directories and open new file.
+
+    """
+
+    # Create directory if it does not exit
+    directory = os.path.dirname(filename)
+    if directory:
+        if not os.path.exists(directory):
+            os.makedirs(directory)
+
+    #  Check for existing file if overide is False
+    if not override:
+        if os.path.exists(filename):
+            raise OSError('file exists.')
+
+    # Return file object
+    return open(filename, 'w')
 
 
 def current_time(format='%Y/%m/%d %H:%M:%S'):
@@ -791,10 +816,10 @@ class SignalFile(Hdf5Base):
     def __getitem__(self, key):
 
         signal = Hdf5Base.__getitem__(self, key)
-        
+
         if isinstance(key, slice):
             signal = Signal(signal)
-        
+
         return signal
 
     @classmethod
@@ -1078,7 +1103,7 @@ class Counter(HistogramBase):
             signal = positions[signal['state'] == self._state]
         else:
             signal = self._position + signal
-        print signal
+
         self._position = signal[-1]
 
         # Count
@@ -1130,23 +1155,77 @@ class MultiBase(object):
             setattr(instance, name, value)
 
     def __len__(self):
-        return len(self._instances)
+        """x.__len__(key) <==> len(x)
 
+        """
+        return len(self._instances)
 
     def __getitem__(self, key):
         """x.__getitem__(key) <==> x[key]
 
         """
-        return self._instances[key]
+        instances = self._instances[key]
 
-    def save(self, file):
-        pass
+        if isinstance(key, slice):
+            instances = self.__class__(instances)
 
-    def load(self, file):
-        pass
+        return instances
 
     def append(self, instance):
         self.__dict__['_instances'].append(instance)
+
+    def save(self, file, override=False):
+        """Pcikle instance to file.
+
+        """
+
+        if isinstance(file, str):
+            with create_file(file, override) as fobj:
+                pickle.dump(self, fobj)
+        else:
+            pickle.dump(self, file)
+
+    @classmethod
+    def load(cls, file):
+        """Unpickle from file.
+
+        """
+        if isinstance(file, str):
+            # Handle filenames
+            with open(file, 'r') as fobj:
+                multi = pickle.load(fobj)
+        else:
+            # Handle file objects
+            multi = pickle.load(file)
+
+        return multi
+
+    def __setstate__(self, dict):
+        """For correct unpickling.
+
+        Otherwise pickle.load will cause an error because of __getattr__
+        """
+        self.__dict__.update(dict)   # update attributes
+
+    def sort(self, mask):
+        """Sort by delta
+
+        """
+        if isinstance(mask, str):
+            mask = self.__getattr__(mask)
+
+        self._instances.sort(key=dict(zip(self._instances, mask)).get)
+
+    def find(self, value, attribute):
+        matches = [instance for instance in self.__iter__()
+                   if instance.__getattribute__(attribute) == value]
+
+        if len(matches) == 0:
+            return None
+        elif len(matches) == 1:
+            return matches[0]
+        else:
+            return self.__class__(matches)
 
 
 class MultiCounter(MultiBase):
@@ -1155,7 +1234,7 @@ class MultiCounter(MultiBase):
         MultiBase.__init__(self, cls=Counter, instances=counters)
 
     @classmethod
-    def from_deltas(cls,state, deltas):
+    def from_deltas(cls, state, deltas):
         return cls([Counter(state, delta) for delta in deltas])
 
     @classmethod
@@ -1167,6 +1246,13 @@ class MultiCounter(MultiBase):
     def from_linspace(cls, state, start, stop, points):
         deltas = np.linspace(start, stop, points)
         return cls.from_deltas(state, deltas)
+
+    def sort(self, mask='delta'):
+        MultiBase.sort(self, mask)
+
+    def find(self, value, attribute='delta'):
+        return MultiBase.find(self, value, attribute)
+
 
 
 class MultiDetector(MultiBase):
