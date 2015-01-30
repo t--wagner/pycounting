@@ -69,6 +69,7 @@ def tc(sampling_rate, unit='s'):
     return float(time_constant)
 
 
+
 def dtr(values, bits=16, min=-10, max=10):
     """Calculate real absolut values from dwords.
 
@@ -243,7 +244,7 @@ class Hdf5Base(CountingBase):
         """
         return self.dataset.shape
 
-    def append(self, data):
+    def extend(self, data):
         """Append new data at the end of signal.
 
         """
@@ -257,6 +258,122 @@ class Hdf5Base(CountingBase):
 
         # Insert new data
         self.dataset[size0:size1] = data
+
+
+class CallableList(list):
+
+    def __init__(self, iterable):
+        list.__init__(self, iterable)
+
+    def __call__(self, *args, **kwargs):
+        return [item(*args, **kwargs) for item in self.__iter__()]
+
+
+class MultiBase(object):
+
+    def __init__(self, cls, instances=[]):
+
+        # Avoid __setattr__ call
+        self.__dict__['_instances'] = list(instances)
+        self.__dict__['_methods'] = dir(cls)
+
+    def __dir__(self):
+        return self._methods
+
+    def __iter__(self):
+        return iter(self.__dict__['_instances'])
+
+    def __getattr__(self, name):
+        """Return a callable list.
+
+         First lookup in MultiClass and later in the instances.
+
+        """
+        return CallableList([getattr(instance, name)
+                            for instance in self.__iter__()])
+
+    def __setattr__(self, name, value):
+        """Get attribute.
+
+        First lookup in MultiClass and later in the instances.
+
+        """
+        for instance in self.__dict__['_instances']:
+            setattr(instance, name, value)
+
+    def __len__(self):
+        """x.__len__(key) <==> len(x)
+
+        """
+        return len(self._instances)
+
+    def __getitem__(self, key):
+        """x.__getitem__(key) <==> x[key]
+
+        """
+        instances = self._instances[key]
+
+        if isinstance(key, slice):
+            instances = self.__class__(instances)
+
+        return instances
+
+    def append(self, instance):
+        self.__dict__['_instances'].append(instance)
+
+    def to_pickle(self, file, override=False):
+        """Pcikle instance to file.
+
+        """
+
+        if isinstance(file, str):
+            with create_file(file, override) as fobj:
+                pickle.dump(self, fobj)
+        else:
+            pickle.dump(self, file)
+
+    @classmethod
+    def from_pickle(cls, file):
+        """Unpickle from file.
+
+        """
+        if isinstance(file, str):
+            # Handle filenames
+            with open(file, 'r') as fobj:
+                multi = pickle.load(fobj)
+        else:
+            # Handle file objects
+            multi = pickle.load(file)
+
+        return multi
+
+    def __setstate__(self, dict):
+        """For correct unpickling.
+
+        Otherwise pickle.load will cause an error because of __getattr__
+        """
+        self.__dict__.update(dict)   # update attributes
+
+    def sort(self, mask):
+        """Sort by delta
+
+        """
+        if isinstance(mask, str):
+            mask = self.__getattr__(mask)
+
+        self._instances.sort(key=dict(zip(self._instances, mask)).get)
+
+    def find(self, value, attribute):
+        matches = [instance for instance in self.__iter__()
+                   if instance.__getattribute__(attribute) == value]
+
+        if len(matches) == 0:
+            return None
+        elif len(matches) == 1:
+            return matches[0]
+        else:
+            return self.__class__(matches)
+
 
 
 class Trace(Hdf5Base):
@@ -393,6 +510,28 @@ class Detector(object):
 
         mpl_lines2d = [plt.axhline(value, **kwargs)[0] for value in self.abs]
         return mpl_lines2d
+
+
+class MultiDetector(MultiBase):
+
+    def __init__(self, detectors):
+        MultiBase.__init__(self, cls=Detector, instances=detectors)
+
+    @classmethod
+    def from_product(cls, average=[1], nsigma=[2], system=[None], factor=1):
+        """Create MultiDetector from cartesian product of attributes.
+
+        """
+        return cls([Detector(*values)
+                    for i in range(factor)
+                    for values in product(average, nsigma, system)])
+
+    def digitize(self, window, signals):
+        if not len(signals) == self.__len__():
+            raise ValueError('Signal len does not fit.')
+
+        for detector, signal in zip(self.__iter__(), signals):
+            detector.digitize(window, signal)
 
 
 class Level(object):
@@ -585,7 +724,7 @@ class LevelTrace(Hdf5Base):
         fit.parameters[2::3] = np.abs(fit.parameters[2::3])
 
         # Store parameters
-        self.append(tuple(fit.parameters))
+        self.extent(tuple(fit.parameters))
 
         # Return current system and fit
         return system, fit
@@ -855,6 +994,22 @@ class SignalFile(Hdf5Base):
         pass
 
 
+class MultiSignal(MultiBase):
+
+    def __init__(self, signals):
+        MultiBase.__init__(self, cls=Signal, instances=signals)
+
+    @classmethod
+    def from_product(cls, state, bin=[1000], width=[None], signal=[None],
+                     nr=1):
+        """Create MultiSignal from cartesian product of attributes.
+
+        """
+        return cls([Signal(*values)
+                    for i in range(nr)
+                    for values in product(state, bin, width, signal)])
+
+
 class HistogramBase(object):
     __metaclass__ = abc.ABCMeta
 
@@ -924,7 +1079,8 @@ class HistogramBase(object):
 
         return line
 
-    def moment(self, n, c=0):
+
+    def calc_moment(self, n, c=0):
         """Calculate the n-th moment of histogram about the value c.
 
         """
@@ -934,13 +1090,13 @@ class HistogramBase(object):
         moment = np.sum(self.freqs * ((bins - c) ** n)) / self.elements
         return moment
 
-    def moment_central(self, n):
+    def calc_moment_central(self, n):
         """Calculate the n-th central moment of histogram.
 
         """
         return self.moment(n, self.mean)
 
-    def cumulants(self, n, return_moments=False):
+    def calc_cumulants(self, n, return_moments=False):
 
         moments = [self.moment(i) for i in xrange(n)]
         if return_moments:
@@ -964,7 +1120,7 @@ class Histogram(HistogramBase):
         else:
             self._freqs, self._bins = np.histogram(data, bins, width)
 
-    def append(self, data):
+    def add(self, data):
         """Add data to the histogram.
 
         """
@@ -974,16 +1130,16 @@ class Histogram(HistogramBase):
             self._freqs, self._bins = np.histogram(data, self._bins,
                                                    self._width)
 
-    def insert(self, iteratable):
+    def fill(self, iteratable):
         """Add data from iteratable to the histogram.
 
         """
 
         for data in iteratable:
-            self.append(data)
+            self.add(data)
 
     @property
-    def histogram(self):
+    def histogram(self):append
         index = self._freqs > 0
         bins = self._bins[:-1][index]
         freqs = self._freqs[index]
@@ -995,7 +1151,7 @@ class Time(Histogram):
 
     def __init__(self, state, bins=1000, width=None, signal=None):
 
-        self.state = state
+        self._state = state
 
         if not width:
             width = (0, bins)
@@ -1007,14 +1163,18 @@ class Time(Histogram):
         else:
             Histogram.__init__(self, bins=bins, width=width)
 
-    def append(self, times):
+    @property
+    def state(self):
+        return self._state
+
+    def add(self, times):
         """Add times.
 
         """
 
         if isinstance(times, (Signal, SignalFile)):
             times = times.length[times.state == self.state]
-        Histogram.append(self, times)
+        Histogram.add(self, times)
 
     def fit_exp(self, a=None, rate=None, range=None, normed=False):
         """Fit the time Histogram with an exponential function.
@@ -1069,6 +1229,24 @@ class Time(Histogram):
         return line
 
 
+class MultiTime(MultiBase):
+
+    def __init__(self, times):
+        MultiBase.__init__(self, cls=Time, instances=times)
+
+    @classmethod
+    def from_states(cls, states):
+        """Create MultiTime from range of states.
+
+        """
+        return cls([Time(state=state) for state in states])
+
+    def fill(self, iteratable):
+        for signals in iteratable:
+            self.add(signals)
+
+
+
 class Counter(HistogramBase):
 
     def __init__(self, state, delta, position=0, offset=0):
@@ -1114,120 +1292,6 @@ class Counter(HistogramBase):
                                                        self._histogram_dict)
 
 
-class CallableList(list):
-
-    def __init__(self, iterable):
-        list.__init__(self, iterable)
-
-    def __call__(self, *args, **kwargs):
-        return [item(*args, **kwargs) for item in self.__iter__()]
-
-
-class MultiBase(object):
-
-    def __init__(self, cls, instances=[]):
-        # Avoid __setattr__ call
-        self.__dict__['_instances'] = list(instances)
-        self.__dict__['_methods'] = dir(cls)
-
-    def __dir__(self):
-        return self._methods
-
-    def __iter__(self):
-        return iter(self.__dict__['_instances'])
-
-    def __getattr__(self, name):
-        """Return a callable list.
-
-         First lookup in MultiClass and later in the instances.
-
-        """
-        return CallableList([getattr(instance, name)
-                            for instance in self.__iter__()])
-
-    def __setattr__(self, name, value):
-        """Get attribute.
-
-        First lookup in MultiClass and later in the instances.
-
-        """
-        for instance in self.__dict__['_instances']:
-            setattr(instance, name, value)
-
-    def __len__(self):
-        """x.__len__(key) <==> len(x)
-
-        """
-        return len(self._instances)
-
-    def __getitem__(self, key):
-        """x.__getitem__(key) <==> x[key]
-
-        """
-        instances = self._instances[key]
-
-        if isinstance(key, slice):
-            instances = self.__class__(instances)
-
-        return instances
-
-    def append(self, instance):
-        self.__dict__['_instances'].append(instance)
-
-    def save(self, file, override=False):
-        """Pcikle instance to file.
-
-        """
-
-        if isinstance(file, str):
-            with create_file(file, override) as fobj:
-                pickle.dump(self, fobj)
-        else:
-            pickle.dump(self, file)
-
-    @classmethod
-    def load(cls, file):
-        """Unpickle from file.
-
-        """
-        if isinstance(file, str):
-            # Handle filenames
-            with open(file, 'r') as fobj:
-                multi = pickle.load(fobj)
-        else:
-            # Handle file objects
-            multi = pickle.load(file)
-
-        return multi
-
-    def __setstate__(self, dict):
-        """For correct unpickling.
-
-        Otherwise pickle.load will cause an error because of __getattr__
-        """
-        self.__dict__.update(dict)   # update attributes
-
-    def sort(self, mask):
-        """Sort by delta
-
-        """
-        if isinstance(mask, str):
-            mask = self.__getattr__(mask)
-
-        self._instances.sort(key=dict(zip(self._instances, mask)).get)
-
-    def find(self, value, attribute):
-        matches = [instance for instance in self.__iter__()
-                   if instance.__getattribute__(attribute) == value]
-
-        if len(matches) == 0:
-            return None
-        elif len(matches) == 1:
-            return matches[0]
-        else:
-            return self.__class__(matches)
-
-
 class MultiCounter(MultiBase):
 
     def __init__(self, counters):
@@ -1255,64 +1319,21 @@ class MultiCounter(MultiBase):
 
 
 
-class MultiDetector(MultiBase):
-
-    def __init__(self, detectors):
-        MultiBase.__init__(self, cls=Detector, instances=detectors)
-
-    @classmethod
-    def from_product(cls, average=[1], nsigma=[2], system=[None], factor=1):
-        """Create MultiDetector from cartesian product of attributes.
-
-        """
-        return cls([Detector(*values)
-                    for i in range(factor)
-                    for values in product(average, nsigma, system)])
-
-    def digitize(self, window, signals):
-        if not len(signals) == self.__len__():
-            raise ValueError('Signal len does not fit.')
-
-        for detector, signal in zip(self.__iter__(), signals):
-            detector.digitize(window, signal)
 
 
-class MultiSignal(MultiBase):
-
-    def __init__(self, signals):
-        MultiBase.__init__(self, cls=Signal, instances=signals)
-
-    @classmethod
-    def from_product(cls, state, bin=[1000], width=[None], signal=[None],
-                     nr=1):
-        """Create MultiSignal from cartesian product of attributes.
-
-        """
-        return cls([Time(*values)
-                    for i in range(nr)
-                    for values in product(state, bin, width, signal)])
 
 
-class MultiTime(MultiBase):
 
-    def __init__(self, times):
-        MultiBase.__init__(self, cls=Time, instances=times)
 
-    @classmethod
-    def from_product(cls, data=[None], start=[0], nr=1):
-        """Create MultiTime from cartesian product of attributes.
 
-        """
-        return cls([Signal(*values)
-                    for i in range(nr)
-                    for values in product(data, start)])
 
-    def append(self, signals):
-        if not len(signals) == self.__len__():
-            raise ValueError('Signal len does not fit.')
 
-        for time, signal in zip(self.__iter__(), signals):
-            time.append(signal)
+
+
+
+
+
+
 
 
 class Fit(object):
@@ -1408,6 +1429,7 @@ def flinear(x, m=1, y0=0):
 
 def fexp(x, a=1, tau=-1):
     """Exponential function.
+
     """
     x = np.array(x, copy=False)
     return a * np.exp(x / float(tau))
