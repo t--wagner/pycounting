@@ -375,7 +375,6 @@ class MultiBase(object):
             return self.__class__(matches)
 
 
-
 class Trace(Hdf5Base):
 
     @classmethod
@@ -1316,24 +1315,6 @@ class MultiCounter(MultiBase):
 
     def find(self, value, attribute='delta'):
         return MultiBase.find(self, value, attribute)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 class Fit(object):
