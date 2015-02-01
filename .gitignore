@@ -16,7 +16,7 @@ Desktop.ini
 *.py[cod]
 
 # C extensions
-*.so
+#*.so
 
 # Packages
 *.egg

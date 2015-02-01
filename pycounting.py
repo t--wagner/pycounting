@@ -1138,7 +1138,7 @@ class Histogram(HistogramBase):
             self.add(data)
 
     @property
-    def histogram(self):append
+    def histogram(self):
         index = self._freqs > 0
         bins = self._bins[:-1][index]
         freqs = self._freqs[index]
@@ -1157,7 +1157,7 @@ class Time(Histogram):
 
         # Get all times of state from signal
         if signal is not None:
-            times = signal['length'][signal['state'] == self._state]
+            times = signal.length[signal.state == self._state]
             Histogram.__init__(self, bins, width, times)
         else:
             Histogram.__init__(self, bins=bins, width=width)
@@ -1234,11 +1234,11 @@ class MultiTime(MultiBase):
         MultiBase.__init__(self, cls=Time, instances=times)
 
     @classmethod
-    def from_states(cls, states):
+    def from_states(cls, states, *time_args, **time_kwargs):
         """Create MultiTime from range of states.
 
         """
-        return cls([Time(state=state) for state in states])
+        return cls([Time(state=state, *time_args, **time_kwargs) for state in states])
 
     def fill(self, iteratable):
         for signals in iteratable:
