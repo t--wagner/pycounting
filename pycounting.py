@@ -1079,7 +1079,7 @@ class HistogramBase(object):
         return line
 
 
-    def calc_moment(self, n, c=0):
+    def moment(self, n, c=0):
         """Calculate the n-th moment of histogram about the value c.
 
         """
@@ -1089,13 +1089,13 @@ class HistogramBase(object):
         moment = np.sum(self.freqs * ((bins - c) ** n)) / self.elements
         return moment
 
-    def calc_moment_central(self, n):
+    def moment_central(self, n):
         """Calculate the n-th central moment of histogram.
 
         """
         return self.moment(n, self.mean)
 
-    def calc_cumulants(self, n, return_moments=False):
+    def cumulants(self, n, return_moments=False):
 
         moments = [self.moment(i) for i in xrange(n)]
         if return_moments:
@@ -1244,7 +1244,8 @@ class MultiTime(MultiBase):
         for signals in iteratable:
             self.add(signals)
 
-
+    def find(self, value, attribute='state'):
+        return MultiBase.find(self, value, attribute)
 
 class Counter(HistogramBase):
 
