@@ -5,7 +5,7 @@ import os
 import glob
 
 from itertools import izip, product
-from collections import defaultdict
+from collections import defaultdict, OrderedDict
 from operator import itemgetter
 
 import cPickle as pickle
@@ -83,17 +83,32 @@ def dtr(values, bits=16, min=-10, max=10):
     return np.array(values)
 
 
-def list_filenames(pathname):
+def list_filenames(file_pattern):
     """List of sorted filenames in path, based on pattern.
 
     """
-    files = glob.glob(pathname)
+    files = glob.glob(file_pattern)
     return sorted(files)
+
+
+def dict_filenames(file_pattern, index=0, seperator='_'):
+    """Create ordered dictonary from filenames in based on pattern.
+
+    """
+    files = OrderedDict()
+    for filename in list_filenames(file_pattern):
+        basename = filename.split('/')[-1]
+        key = basename.split(seperator)[index]
+        files[key] = filename
+    return files
 
 
 def Hdf5File(*args, **kwargs):
     return h5py.File(*args, **kwargs)
 
+def hdf_keys(filename):
+    with h5py.File(filename,  mode='r') as hdf:
+        return hdf.keys()
 
 class CountingBase(object):
     __metaclass__ = abc.ABCMeta
@@ -140,9 +155,14 @@ class Hdf5Base(CountingBase):
 
     """
 
-    def __init__(self, dataset, filename=None, *file_args, **file_kwargs):
-        if filename:
-            hdf_file = Hdf5File(filename, *file_args, **file_kwargs)
+    def __init__(self, dataset, hdf_file=None, *file_args, **file_kwargs):
+
+        if hdf_file:
+            # Create or open hdf file
+            if isinstance(hdf_file, str):
+                hdf_file = Hdf5File(hdf_file, *file_args, **file_kwargs)
+
+            # Get the dataset object for hdf file
             dataset = hdf_file[dataset]
 
         CountingBase.__init__(self)
@@ -157,7 +177,7 @@ class Hdf5Base(CountingBase):
         self.close()
 
     @classmethod
-    def create(cls, hdf5_file, dataset_key, date=None, contact=None,
+    def create(cls, dataset, hdf_file , date=None, contact=None,
                comment=None, **dset_kwargs):
         """Create a new HDF5 dataset and initalize Hdf5Base.
 
@@ -171,8 +191,11 @@ class Hdf5Base(CountingBase):
         if contact is None:
             contact = ''
 
+        if isinstance(hdf_file, str):
+            hdf_file = Hdf5File(hdf_file)
+
         # Initalize Hdf5Base instance with new dataset
-        hdf5base = cls(hdf5_file.create_dataset(dataset_key, **dset_kwargs))
+        hdf5base = cls(hdf_file.create_dataset(dataset, **dset_kwargs))
         hdf5base.date = date
         hdf5base.comment = comment
         hdf5base.contact = contact
@@ -363,7 +386,7 @@ class MultiBase(object):
 
         self._instances.sort(key=dict(zip(self._instances, mask)).get)
 
-    def find(self, value, attribute):
+    def get(self, value, attribute):
         matches = [instance for instance in self.__iter__()
                    if instance.__getattribute__(attribute) == value]
 
@@ -401,12 +424,21 @@ class Trace(Hdf5Base):
 
         return self.__len__() / float(self.sampling_rate * factor)
 
-    def plot(self, start, stop, step=1, ax=None, **kwargs):
+
+    def plot(self, start, stop, step=None, ax=None, time=True, **kwargs):
 
         if not ax:
             ax = plt.gca()
 
-        x = np.arange(start, stop, step)
+        # Calculate teh time signal insted of samples
+        if time:
+            start *= self.sampling_rate
+            stop  *= self.sampling_rate
+
+            if step:
+                step *= self.sampling_rate
+
+        x = np.arange(start, stop, step) / self.sampling_rate
         y = self.__getitem__(slice(start, stop, step))
 
         mpl_line2d, = ax.plot(x, y, **kwargs)
@@ -507,7 +539,7 @@ class Detector(object):
         if not ax:
             ax = plt.gca()
 
-        mpl_lines2d = [plt.axhline(value, **kwargs)[0] for value in self.abs]
+        mpl_lines2d = [plt.axhline(value, **kwargs) for value in self.abs]
         return mpl_lines2d
 
 
@@ -538,6 +570,12 @@ class Level(object):
     def __init__(self, center, sigma):
         self.center = center
         self.sigma = abs(sigma)
+
+    @classmethod
+    def from_abs(cls, low, high):
+        sigma = float(high - low) / 2
+        center = low + sigma
+        return cls(center, sigma)
 
     def __repr__(self):
         return 'Level(' + str(self.center) + ', ' + str(self.sigma) + ')'
@@ -579,6 +617,16 @@ class System(object):
 
     def __init__(self, *levels):
         self.levels = levels
+
+    @classmethod
+    def from_tuples(cls, *tuples):
+        levels = [Level(center, sigma) for center, sigma in tuples]
+        return cls(*levels)
+
+    @classmethod
+    def from_tuples_abs(cls, *tuples):
+        levels = (Level.from_abs(high, low) for high, low in tuples)
+        return cls(*levels)
 
     @classmethod
     def from_histogram(cls, histogram, start_parameters=None, levels=2, sigma=1):
@@ -684,7 +732,7 @@ class LevelTrace(Hdf5Base):
     """
 
     @classmethod
-    def create(cls, hdf5_file, dataset_key, nr_of_levels, time_constant,
+    def create(cls, dataset, hdf_file, nr_of_levels, time_constant,
                date=None, contact=None, comment=None):
 
         # Define dtype
@@ -697,7 +745,7 @@ class LevelTrace(Hdf5Base):
         dtype = np.dtype(type_list)
 
         # Create dataset
-        level_trace = cls(Hdf5Base.create(hdf5_file, dataset_key, date,
+        level_trace = cls(Hdf5Base.create(dataset, hdf_file, date,
                                           contact, comment, shape=(0,),
                                           dtype=dtype,
                                           maxshape=(None,)).dataset)
@@ -723,7 +771,7 @@ class LevelTrace(Hdf5Base):
         fit.parameters[2::3] = np.abs(fit.parameters[2::3])
 
         # Store parameters
-        self.extent(tuple(fit.parameters))
+        self.extend(tuple(fit.parameters))
 
         # Return current system and fit
         return system, fit
@@ -742,10 +790,11 @@ class LevelTrace(Hdf5Base):
             ax = plt.gca()
 
         # Get y values
+        x = self.len() * self.time_constant
         ys = [self.__getitem__(key) for key in show_list]
 
         # Plot everything
-        mpl_lines2d = [ax.plot(y, **kwargs)[0] for y in ys]
+        mpl_lines2d = [ax.plot(x, y, **kwargs)[0] for y in ys]
 
         return mpl_lines2d
 
@@ -961,7 +1010,7 @@ class SignalFile(Hdf5Base):
         return signal
 
     @classmethod
-    def create(cls, hdf5_file, dataset_key,
+    def create(cls, dataset, hdf5_file,
                nr_of_levels, nsigma, average, date=None, contact=None,
                comment=None,
                state_type=np.int8,
@@ -974,12 +1023,12 @@ class SignalFile(Hdf5Base):
                           ('value', value_type)])
 
         # Initialize signal
-        signal = cls(Hdf5Base.create(hdf5_file, dataset_key,
+        signal = cls(Hdf5Base.create(dataset, hdf5_file,
                                      date, contact, comment, shape=(0,),
                                      dtype=dtype, maxshape=(None,)).dataset)
 
         # Create signal instance and append undifined level
-        signal.append((-1, 0, 0))
+        signal.extend((-1, 0, 0))
         signal.nr_of_levels = nr_of_levels
         signal.nsigma = nsigma
         signal.average = average
@@ -1054,11 +1103,25 @@ class HistogramBase(object):
         return np.sum(self.freqs * self.bins) / float(self.elements)
 
     @property
+    def variance(self):
+        # The second central moment ist the variance
+        return self.moment_central(2)
+
+    @property
+    def standard_deviation(self):
+        # The square root of teh variance
+        return np.sqrt(self.variance)
+
+    @property
     def max_freq(self):
         """Return maximum of histogram.
 
         """
         return self.freqs.max()
+
+    @property
+    def skewness(self):
+        pass
 
     @property
     def max_freq_n(self):
@@ -1220,10 +1283,13 @@ class Time(Histogram):
         """Plot time distribution.
 
         """
-        line = Histogram.plot(self, ax, normed, False, **kwargs)
+        if not ax:
+            ax = plt.gca()
+
+        line = Histogram.plot(self, ax, normed, **kwargs)
 
         if log:
-            plt.yscale('log')
+            ax.set_yscale('log')
 
         return line
 
@@ -1244,8 +1310,51 @@ class MultiTime(MultiBase):
         for signals in iteratable:
             self.add(signals)
 
-    def find(self, value, attribute='state'):
-        return MultiBase.find(self, value, attribute)
+    def get(self, value, attribute='state'):
+        return MultiBase.get(self, value, attribute)
+
+
+class CounterTrace(Hdf5Base):
+
+    @classmethod
+    def create(cls, dataset, hdf_file, state, delta, date=None, contact=None,
+               comment=None, **dset_kwargs):
+
+        # Define Datatype
+        dtype = np.dtype(np.int16)
+
+        # Create HdfFile
+        counter_trace = cls(Hdf5Base.create(dataset, hdf_file, date,
+                                            contact, comment, shape=(0,),
+                                            dtype=dtype,
+                                            maxshape=(None,)).dataset)
+
+        # Set attributes
+        counter_trace.state = state
+        counter_trace.delta = delta
+
+        # Return initalized instance
+        return counter_trace
+
+    def count(self, signal):
+        """Count the states for signal.
+
+        """
+        if isinstance(signal, (Signal, SignalFile)):
+            positions = self._position + np.cumsum(signal['length'])
+            signal = positions[signal['state'] == self._state]
+        else:
+            signal = self._position + signal
+
+        self._position = signal[-1]
+
+        # Count
+        self._offset, self._counts = _cycounting.count(signal,
+                                                       self._delta,
+                                                       self._offset,
+                                                       self._counts,
+                                                       self)
+
 
 class Counter(HistogramBase):
 
@@ -1314,8 +1423,8 @@ class MultiCounter(MultiBase):
     def sort(self, mask='delta'):
         MultiBase.sort(self, mask)
 
-    def find(self, value, attribute='delta'):
-        return MultiBase.find(self, value, attribute)
+    def get(self, value, attribute='delta'):
+        return MultiBase.get(self, value, attribute)
 
 
 class Fit(object):

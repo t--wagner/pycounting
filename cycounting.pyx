@@ -58,6 +58,7 @@ def digitize(np.ndarray[datatype, ndim=1] trace,
             pass
         else:
             # State changed
+            # We us append here becaus new_signal is here a list
             new_signal.append((level_state, level_length, level_value))
 
             # Reset level
@@ -65,13 +66,13 @@ def digitize(np.ndarray[datatype, ndim=1] trace,
             level_length = 0
             level_value  = datapoint
 
-    # Append unfinished stuff
+    # Extend unfinished stuff
     new_signal.append((level_state, level_length, level_value))
 
-    # Update last level and append the rest
+    # Update last level and extend the rest
     signal[-1] = new_signal[0]
     #del new_signal[0]
-    signal.append(new_signal[1:])
+    signal.extend(new_signal[1:])
 
     # Return the buffer that is necassary to buffer
     new_signal[0] = (new_signal[0][0], new_signal[0][1] - first_level[1], new_signal[0][2])
@@ -92,6 +93,25 @@ def count(np.ndarray[datatype, ndim=1] events,
         else:
             offset += delta
             histogram[counts] += 1
+            counts = 1
+
+    return offset, counts
+
+
+def tcount(np.ndarray[datatype, ndim=1] events,
+           datatype delta
+           datatype offset,
+           unsigned long counts
+           counter_trace):
+
+    cdef datatype event
+
+    for event in events:
+        if (offset <= event) and (event < offset + delta):
+            counts += 1
+        else:
+            offset += delta
+            counter_trace.extend(counts)
             counts = 1
 
     return offset, counts
