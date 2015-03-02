@@ -40,6 +40,10 @@ class BiTrace(object):
         self._step = self._delta / float(self._delay)
         self._stepnr = 0
 
+        self.data = None
+        self.noise = None
+        self.function = None
+
     def __iter__(self):
         return self
 

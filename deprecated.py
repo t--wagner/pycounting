@@ -255,7 +255,7 @@ def binary_to_hdf(btrace, hdf_file, dataset_key, sampling_rate,
 
     htrace = pyc.Trace.create(hdf_file, dataset_key, dtype=btrace._dtype,
                               shape=(len(btrace),),
-                              sampling_rate=sampling_rate, bit=bit)
+                              sampling_rate=sampling_rate)
 
     # Copy binary trace to HDF5 dataset
     position = 0

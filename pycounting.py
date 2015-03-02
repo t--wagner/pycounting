@@ -74,12 +74,16 @@ def dtr(values, bits=16, min=-10, max=10):
     """Calculate real absolut values from dwords.
 
     """
+    values = np.array(values, copy=False)
 
     # Get the number of steps out of bits
     steps = 2 ** bits - 1
 
+
+
     # Process the data values and return numpy array
-    values = [value * (max - min) / float((steps)) + min for value in values]
+    values = values * (max - min) / float(steps) + min
+    #values = [value * (max - min) / float((steps)) + min for value in values]
     return np.array(values)
 
 
@@ -401,11 +405,11 @@ class MultiBase(object):
 class Trace(Hdf5Base):
 
     @classmethod
-    def create(cls, hdf_file, dataset_key, sampling_rate,
+    def create(cls, dataset, hdf_file, sampling_rate,
                dtype=np.dtype('float32'), shape=(0,), maxshape=(None,),
                chunks=(100000,)):
 
-        trace = cls(Hdf5Base.create(hdf_file, dataset_key, dtype=dtype,
+        trace = cls(Hdf5Base.create(dataset, hdf_file, dtype=dtype,
                     shape=shape, maxshape=maxshape, chunks=chunks).dataset)
 
         trace.sampling_rate = sampling_rate
