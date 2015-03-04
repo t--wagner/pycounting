@@ -82,7 +82,7 @@ def dtr(values, bits=16, min=-10, max=10):
 
 
     # Process the data values and return numpy array
-    values = values * (max - min) / float(steps) + min
+    values = values * float(max - min) / float(steps) + min
     #values = [value * (max - min) / float((steps)) + min for value in values]
     return np.array(values)
 
@@ -127,7 +127,6 @@ class CountingBase(object):
     @abc.abstractmethod
     def __len__(self):
         pass
-
 
     def windows(self, length, start=0, stop=None, nr=None):
         """Iterator over windows of length.
@@ -415,8 +414,8 @@ class Trace(Hdf5Base):
         trace.sampling_rate = sampling_rate
         return trace
 
-    def length(self, unit='m'):
-        """Get the time length of the trace for unit.
+    def duration(self, unit='m'):
+        """Get the time length of the trace in unit.
 
         """
         if unit == 's':
@@ -428,24 +427,54 @@ class Trace(Hdf5Base):
 
         return self.__len__() / float(self.sampling_rate * factor)
 
+    def _time_to_index(self, start, stop, step=None):
 
-    def plot(self, start, stop, step=None, ax=None, time=True, **kwargs):
+        start *= self.sampling_rate
+        stop  *= self.sampling_rate
 
+        if step:
+            step  *= self.sampling_rate
+        else:
+            step = 1
+
+        return (int(start), int(stop), int(step))
+
+    def xdata(self, start, stop, step=None, time=True):
+
+        if time:
+            start, stop, step = self._time_to_index(start, stop, step)
+            x = np.arange(start, stop, step) / self.sampling_rate
+        else:
+            if not step:
+                step = 1
+            x = np.arange(int(start), int(stop), int(step))
+
+        return x
+
+    def ydata(self, start, stop, step=None, time=True):
+
+        if time:
+            start, stop, step = self._time_to_index(start, stop, step)
+
+        return self.__getitem__(slice(start, stop, step))
+
+    def data(self, start, stop, step=None, time=False):
+
+        x = self.xdata(start, stop, step, time)
+        y = self.ydata(start, stop, step, time)
+
+        return x, y
+
+    def plot(self, start, stop, step=None, ax=None, time=True, **plt_kwargs):
+
+        # Get current axes
         if not ax:
             ax = plt.gca()
 
-        # Calculate teh time signal insted of samples
-        if time:
-            start *= self.sampling_rate
-            stop  *= self.sampling_rate
+        # Get data
+        x, y = self.data(start, stop, step, time)
 
-            if step:
-                step *= self.sampling_rate
-
-        x = np.arange(start, stop, step) / self.sampling_rate
-        y = self.__getitem__(slice(start, stop, step))
-
-        mpl_line2d, = ax.plot(x, y, **kwargs)
+        mpl_line2d, = ax.plot(x, y, **plt_kwargs)
 
         return mpl_line2d
 
@@ -808,55 +837,26 @@ class FFT(object):
 
     """
 
-    def __init__(self, values=None, freqs=None, samples=0, sample_rate=1,
+    def __init__(self, values=None, freqs=None, samples=0, sampling_rate=1,
                  average=True):
 
         self.values = values
         self.freqs = freqs
         self.samples = samples
-        self.sample_rate = float(sample_rate)
+        self.sampling_rate = float(sampling_rate)
         self.average = average
 
     @classmethod
-    def from_data(cls, data, sample_rate=1, average=True):
+    def from_data(cls, data, sampling_rate=1, average=True):
         """Create new FFT instance and transform data.
 
         """
         data = np.array(data, copy=False)
         values = np.fft.rfft(data)
-        freqs = np.fft.rfftfreq(data.size, d=1 / float(sample_rate))
+        freqs = np.fft.rfftfreq(data.size, d=1 / float(sampling_rate))
         samples = data.size
 
-        return cls(values, freqs, samples, sample_rate, average)
-
-    @classmethod
-    def from_hdf(cls, dataset):
-        """Create FFT instance from dataset.
-
-        """
-        freqs = dataset['freqs']
-        values = dataset['values']
-        samples = dataset.attrs['samples']
-        sample_rate = dataset.attrs['sample_rate']
-        average = dataset.attrs['average']
-
-        return cls(values, freqs, samples, sample_rate, average)
-
-    def to_hdf(self, hdf5_file, dataset_key):
-        # Create compound datatype
-        fft_dtype = np.dtype([('freqs', self.freqs.dtype),
-                              ('values', self.values.dtype)])
-
-        # Fill array values with data
-        ary = np.empty(shape=self.__len__(), dtype=fft_dtype)
-        ary['freqs'] = self.freqs
-        ary['values'] = self.values
-
-        # Data to hdf5
-        dset = hdf5_file.create_dataset(dataset_key, data=ary)
-        dset.attrs['samples'] = self.samples
-        dset.attrs['sample_rate'] = self.sample_rate
-        dset.attrs['average'] = self.average
+        return cls(values, freqs, samples, sampling_rate, average)
 
     def transform(self, data):
         data = np.array(data, copy=False)
@@ -868,7 +868,7 @@ class FFT(object):
         except TypeError:
             self.values = values
             self.freqs = np.fft.rfftfreq(data.size,
-                                         d=1 / float(self.sample_rate))
+                                         d=1 / float(self.sampling_rate))
             self.samples = data.size
 
     def __len__(self):
@@ -1277,11 +1277,11 @@ class Time(Histogram):
 
         return sample_rate / np.abs(self.fit_exp(range=range).parameters[-1])
 
-    def fft(self, samplerate=1):
+    def fft(self, sampling_rate=1):
         """Create FFT from frequencies.
 
         """
-        return FFT.from_data(self.freqs, samplerate)
+        return FFT.from_data(self.freqs, sampling_rate)
 
     def plot(self, ax=None, normed=False, log=True, **kwargs):
         """Plot time distribution.

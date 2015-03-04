@@ -88,30 +88,13 @@ def count(np.ndarray[datatype, ndim=1] events,
     cdef datatype event
 
     for event in events:
-        if (offset <= event) and (event < offset + delta):
-            counts += 1
-        else:
-            offset += delta
+
+        while ((offset + delta) < event):
+
             histogram[counts] += 1
-            counts = 1
-
-    return offset, counts
-
-
-def tcount(np.ndarray[datatype, ndim=1] events,
-           datatype delta
-           datatype offset,
-           unsigned long counts
-           counter_trace):
-
-    cdef datatype event
-
-    for event in events:
-        if (offset <= event) and (event < offset + delta):
-            counts += 1
-        else:
+            counts = 0
             offset += delta
-            counter_trace.extend(counts)
-            counts = 1
+
+        counts += 1
 
     return offset, counts
