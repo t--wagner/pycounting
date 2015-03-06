@@ -567,12 +567,16 @@ class Detector(object):
         """
         self._buffer = None
 
-    def plot(self, ax=None, **kwargs):
+    def plot(self, ax=None, inverted=False, **kwargs):
 
         if not ax:
             ax = plt.gca()
 
-        mpl_lines2d = [plt.axhline(value, **kwargs) for value in self.abs]
+        if inverted:
+            mpl_lines2d = [plt.axhline(value, **kwargs) for value in self.abs]
+        else:
+            mpl_lines2d = [plt.axvline(value, **kwargs) for value in self.abs]
+
         return mpl_lines2d
 
 

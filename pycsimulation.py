@@ -27,71 +27,85 @@ class ROsc(object):
 
 
 class BiTrace(object):
+    """Simulate a counting Trace.
 
-    def __init__(self, rate0, rate1, level0=0, level1=1, noise_sigma=0, delay=1, sample_rate=100e3):
-        self._rate = [rate0, rate1]
-        self._state = 0
-        self._level = level0
-        self._noise_sigma = noise_sigma
-        self._delay = delay
+    """
 
+    def __init__(self, rate0, rate1, level0=0, level1=1, sampling_rate=100e3,
+                 noise_sigma=0, delay=1, fosc=None):
+
+        # Raten für das Level
+        self._rates = (rate0, rate1)
+        self._level0 = level0
+        self._level1 = level1
         self._delta = level1 - level0
-        self._sample_rate = sample_rate
-        self._step = self._delta / float(self._delay)
-        self._stepnr = 0
+        self._sampling_rate = sampling_rate
+        self._fosc = fosc
 
-        self.data = None
-        self.noise = None
-        self.function = None
+        # Noise
+        self._noise_sigma = noise_sigma
+
+        # Delay
+        self._delay = delay
+        self._delay_stepsize = self._delta / float(self._delay)
+        self._delay_stepnr = 0
+
+        # Function on top
+        #self._function = function
+
+        # Prepare everything
+        self._state = 0
 
     def __iter__(self):
         return self
 
     def next(self):
 
-        rate = self._rate[self._state]
+        # Get rate for current state
+        rate = self._rates[self._state]
 
-        # Wahrscheinlichkeit ändern falls keine Konstante
-        try:
-            rate = rate.next()
-        except AttributeError:
-            pass
+        #Roll the Dice and toogle state
+        if rate / float(self._sampling_rate) > random.random():
+            self._state = 0 if self._state else 1
 
-        #Dice until True
-        if rate / float(self._sample_rate) > random.random():
-
-            # Return the level
-            if self._state:
-                self._state = 0
-            else:
-                self._state = 1
-
-        if self._state == 0 and self._stepnr > 0:
-            self._stepnr -= 1
-        elif self._state == 1 and self._stepnr < self._delay:
-            self._stepnr += 1
-
-        return self._level + random.gauss(0, self._noise_sigma) + self._stepnr * self._step
+        # Delay simulation
+        if self._state == 0 and self._delay_stepnr > 0:
+            self._delay_stepnr -= 1
+        elif self._state == 1 and self._delay_stepnr < self._delay:
+            self._delay_stepnr += 1
 
 
-    def range(self, length):
+        noise = random.gauss(0, self._noise_sigma)
+        delay = self._delay_stepnr * self._delay_stepsize
 
-        # Create numpy array of length
-        data = np.zeros(length)
+        if self._state == 1:
+            binary = self._level1
+            delay = delay - self._delta
+        else:
+            binary = self._level0
 
-        # Fill array
-        for i in xrange(length):
-            data[i] = self.next()
+        if self._fosc:
+            osc = next(self._fosc)
+        else:
+            osc = 0
 
-        return data
+        # Return tuple with all trace components
+        return binary, noise, delay, osc
+
+    def range(self, length=None):
+
+        if not length:
+            length = self._sampling_rate
+
+        return [self.next() for i in xrange(length)]
 
 
 class BiSignal(object):
 
-    def __init__(self, rate0, rate1, state=0, position=0, sample_rate=100e3):
+    def __init__(self, rate0, rate1, state=0, position=0, sampling_rate=100e3):
 
         self._rate = [rate0, rate1]
-        self._sample_rate = sample_rate
+        self._sampling_rate = sampling_rate
         self._state = state
         self._position = position
         self._length = 1
@@ -115,7 +129,7 @@ class BiSignal(object):
             except AttributeError:
                 pass
 
-            p = rate / float(self._sample_rate)
+            p = rate / float(self._sampling_rate)
 
             # Dice until True
             while p < random.random():
