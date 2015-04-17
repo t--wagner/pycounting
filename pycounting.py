@@ -69,7 +69,6 @@ def tc(sampling_rate, unit='s'):
     return float(time_constant)
 
 
-
 def dtr(values, bits=16, min=-10, max=10):
     """Calculate real absolut values from dwords.
 
@@ -344,8 +343,12 @@ class MultiBase(object):
 
         return instances
 
-    def append(self, instance):
-        self.__dict__['_instances'].append(instance)
+    def append(self, object):
+        self.__dict__['_instances'].append(object)
+
+    def extend(self, iterable):
+        for element in iterable:
+            self.append(element)
 
     def to_pickle(self, file, override=False):
         """Pcikle instance to file.
@@ -1112,12 +1115,12 @@ class HistogramBase(object):
 
     @property
     def variance(self):
-        # The second central moment ist the variance
+        # The second central moment is the variance
         return self.moment_central(2)
 
     @property
     def standard_deviation(self):
-        # The square root of teh variance
+        # The square root of the variance
         return np.sqrt(self.variance)
 
     @property
@@ -1126,10 +1129,6 @@ class HistogramBase(object):
 
         """
         return self.freqs.max()
-
-    @property
-    def skewness(self):
-        pass
 
     @property
     def max_freq_n(self):
@@ -1168,7 +1167,7 @@ class HistogramBase(object):
 
     def cumulants(self, n, return_moments=False):
 
-        moments = [self.moment(i) for i in xrange(n)]
+        moments = [self.moment(i) for i in xrange(n + 1)]
         if return_moments:
             return fcumulants(moments), moments
         else:
@@ -1322,7 +1321,14 @@ class MultiTime(MultiBase):
         return MultiBase.get(self, value, attribute)
 
 
+class CounterTraceFile(object):
+    pass
+
+
 class CounterTrace(Hdf5Base):
+    """Counter Trace.
+
+    """
 
     @classmethod
     def create(cls, dataset, hdf_file, state, delta, date=None, contact=None,
@@ -1357,11 +1363,12 @@ class CounterTrace(Hdf5Base):
         self._position = signal[-1]
 
         # Count
-        self._offset, self._counts = _cycounting.count(signal,
-                                                       self._delta,
-                                                       self._offset,
-                                                       self._counts,
-                                                       self)
+        self._offset, self._counts, trace = _cycounting.count2(signal,
+                                                        self._delta,
+                                                        self._offset,
+                                                        self._counts)
+
+        return trace
 
 
 class Counter(HistogramBase):
