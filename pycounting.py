@@ -1583,3 +1583,20 @@ def fcumulants(moments, n=None):
             cumulants[m] -= binom(m - 1, k - 1) * cumulants[k] * moments[m - k]
 
     return cumulants
+
+
+# Long time calculations
+def a(tau_in, tau_out):
+    return (tau_in - tau_out) / float(tau_in + tau_out)
+
+
+def c1(t, tau_in, tau_out):
+    return tau_in * tau_out / float(tau_in + tau_out) * t
+
+
+def c2(t, tau_in, tau_out):
+    return 1/2. * (1 + a(tau_in, tau_out)**2) * c1(t, tau_in, tau_out)
+
+
+def c2_n(t, tau_in, tau_out):
+    return 1/2. * (1 + a(tau_in, tau_out)**2)
