@@ -4,11 +4,11 @@ import abc
 import os
 import glob
 
-from itertools import izip, product
+from itertools import product
 from collections import defaultdict, OrderedDict
 from operator import itemgetter
 
-import cPickle as pickle
+import pickle as pickle
 import datetime
 from textwrap import dedent
 
@@ -111,11 +111,9 @@ def Hdf5File(*args, **kwargs):
 
 def hdf_keys(filename):
     with h5py.File(filename,  mode='r') as hdf:
-        return hdf.keys()
+        return list(hdf.keys())
 
-class CountingBase(object):
-    __metaclass__ = abc.ABCMeta
-
+class CountingBase(object, metaclass=abc.ABCMeta):
     def __init__(self):
         pass
 
@@ -144,7 +142,7 @@ class CountingBase(object):
         stop = int(stop)
 
         # Start iteration over data
-        for position in xrange(start, stop, length):
+        for position in range(start, stop, length):
             # Stop iteration if not enough datapoints available
             if stop < (position + length):
                 return
@@ -219,7 +217,7 @@ class Hdf5Base(CountingBase):
         return self.dataset[key]
 
     def __dir__(self):
-        return self.dataset.attrs.keys() + self.__dict__.keys()
+        return list(self.dataset.attrs.keys()) + list(self.__dict__.keys())
 
     def __setitem__(self, key, value):
         self.dataset[key] = value
@@ -390,7 +388,7 @@ class MultiBase(object):
         if isinstance(mask, str):
             mask = self.__getattr__(mask)
 
-        self._instances.sort(key=dict(zip(self._instances, mask)).get)
+        self._instances.sort(key=dict(list(zip(self._instances, mask))).get)
 
     def get(self, value, attribute):
         matches = [instance for instance in self.__iter__()
@@ -714,7 +712,7 @@ class System(object):
         index = np.array([False, True, True] * (len(fit.parameters) / 3))
         levels = fit.parameters[index]
         system = cls(*[Level(levels[i], levels[i+1])
-                       for i in xrange(0, len(levels), 2)])
+                       for i in range(0, len(levels), 2)])
 
         return system, fit
 
@@ -1069,9 +1067,7 @@ class MultiSignal(MultiBase):
                     for values in product(state, bin, width, signal)])
 
 
-class HistogramBase(object):
-    __metaclass__ = abc.ABCMeta
-
+class HistogramBase(object, metaclass=abc.ABCMeta):
     @abc.abstractproperty
     def histogram(self):
         pass
@@ -1086,10 +1082,10 @@ class HistogramBase(object):
 
     @property
     def items(self):
-        return zip(self.bins, self.freqs)
+        return list(zip(self.bins, self.freqs))
 
     def __iter__(self):
-        return izip(self.bins, self.freqs)
+        return zip(self.bins, self.freqs)
 
     @property
     def elements(self):
@@ -1167,7 +1163,7 @@ class HistogramBase(object):
 
     def cumulants(self, n, return_moments=False):
 
-        moments = [self.moment(i) for i in xrange(n + 1)]
+        moments = [self.moment(i) for i in range(n + 1)]
         if return_moments:
             return fcumulants(moments), moments
         else:
@@ -1393,7 +1389,7 @@ class Counter(HistogramBase):
     @property
     def histogram(self):
 
-        histogram = zip(*sorted(self._histogram_dict.items()))
+        histogram = list(zip(*sorted(self._histogram_dict.items())))
         return np.array(histogram[0]), np.array(histogram[1])
 
     def count(self, signal):

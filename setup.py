@@ -6,5 +6,5 @@ import numpy as np
 setup(
     name = 'cycounting',
     ext_modules = cythonize("cycounting.pyx"),
-    include_dirs = [np.get_include()]
+    #include_dirs = [np.get_include()]
 )
