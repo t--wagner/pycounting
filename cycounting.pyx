@@ -104,7 +104,7 @@ def count2(np.ndarray[datatype, ndim=1] events,
            datatype delta,
            datatype offset,
            unsigned long counts,
-           trace):
+           counting_trace):
 
     cdef datatype event
 

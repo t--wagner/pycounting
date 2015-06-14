@@ -15,6 +15,8 @@ from textwrap import dedent
 import numpy as np
 import matplotlib.pyplot as plt
 import h5py
+import h5pym
+
 from scipy.optimize import curve_fit
 from scipy.special import binom
 
@@ -114,8 +116,6 @@ def hdf_keys(filename):
         return list(hdf.keys())
 
 class CountingBase(object, metaclass=abc.ABCMeta):
-    def __init__(self):
-        pass
 
     @abc.abstractmethod
     def __getitem__(self):
@@ -177,7 +177,7 @@ class Hdf5Base(CountingBase):
         self.close()
 
     @classmethod
-    def create(cls, dataset, hdf_file , date=None, contact=None,
+    def create(cls, dataset, hdf_file, date=None, contact=None,
                comment=None, **dset_kwargs):
         """Create a new HDF5 dataset and initalize Hdf5Base.
 
@@ -207,9 +207,20 @@ class Hdf5Base(CountingBase):
 
         # Handle floating point slice numbers
         if isinstance(key, slice):
-            start = int(key.start) if key.start else None
-            stop = int(key.stop) if key.stop else None
-            step = int(key.step) if key.step else None
+            if key.start is None:
+                start = None
+            else:
+                start = int(key.start)
+
+            if key.stop is None:
+                stop = None
+            else:
+                stop = int(key.stop)
+
+            if key.step is None:
+                step = None
+            else:
+                step = int(key.step)
 
             # Pack new slice with integer values
             key = slice(start, stop, step)
@@ -1050,6 +1061,12 @@ class SignalFile(Hdf5Base):
     def plot(self):
         pass
 
+    def windows(self, length=1e6, start=0, stop=None, nr=None):
+            """Iterator over windows of length.
+
+            """
+            return Hdf5Base.windows(self, length, start, stop, nr)
+
 
 class MultiSignal(MultiBase):
 
@@ -1106,7 +1123,6 @@ class HistogramBase(object, metaclass=abc.ABCMeta):
         """Calculate mean value of histogram.
 
         """
-        #return self.moment(1)
         return np.sum(self.freqs * self.bins) / float(self.elements)
 
     @property
@@ -1315,56 +1331,6 @@ class MultiTime(MultiBase):
 
     def get(self, value, attribute='state'):
         return MultiBase.get(self, value, attribute)
-
-
-class CounterTraceFile(object):
-    pass
-
-
-class CounterTrace(Hdf5Base):
-    """Counter Trace.
-
-    """
-
-    @classmethod
-    def create(cls, dataset, hdf_file, state, delta, date=None, contact=None,
-               comment=None, **dset_kwargs):
-
-        # Define Datatype
-        dtype = np.dtype(np.int16)
-
-        # Create HdfFile
-        counter_trace = cls(Hdf5Base.create(dataset, hdf_file, date,
-                                            contact, comment, shape=(0,),
-                                            dtype=dtype,
-                                            maxshape=(None,)).dataset)
-
-        # Set attributes
-        counter_trace.state = state
-        counter_trace.delta = delta
-
-        # Return initalized instance
-        return counter_trace
-
-    def count(self, signal):
-        """Count the states for signal.
-
-        """
-        if isinstance(signal, (Signal, SignalFile)):
-            positions = self._position + np.cumsum(signal['length'])
-            signal = positions[signal['state'] == self._state]
-        else:
-            signal = self._position + signal
-
-        self._position = signal[-1]
-
-        # Count
-        self._offset, self._counts, trace = _cycounting.count2(signal,
-                                                        self._delta,
-                                                        self._offset,
-                                                        self._counts)
-
-        return trace
 
 
 class Counter(HistogramBase):
@@ -1596,3 +1562,5 @@ def c2(t, tau_in, tau_out):
 
 def c2_n(t, tau_in, tau_out):
     return 1/2. * (1 + a(tau_in, tau_out)**2)
+
+
