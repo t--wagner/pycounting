@@ -955,10 +955,6 @@ class FFT(object):
 
 class Signal(CountingBase):
 
-    _key_state = 'state'
-    _key_length = 'length'
-    _key_value = 'value'
-
     def __init__(self, data, start=0):
         CountingBase.__init__(self)
 
@@ -982,15 +978,15 @@ class Signal(CountingBase):
 
     @property
     def state(self):
-        return self.data[self._key_state]
+        return self.data['state']
 
     @property
     def length(self):
-        return self.data[self._key_length]
+        return self.data['length']
 
     @property
     def value(self):
-        return self.data[self._key_value]
+        return self.data['value']
 
     @property
     def position(self):
@@ -1085,6 +1081,7 @@ class MultiSignal(MultiBase):
 
 
 class HistogramBase(object, metaclass=abc.ABCMeta):
+
     @abc.abstractproperty
     def histogram(self):
         pass
@@ -1159,7 +1156,6 @@ class HistogramBase(object, metaclass=abc.ABCMeta):
             line, = ax.plot(y, self.bins, **kwargs)
 
         return line
-
 
     def moment(self, n, c=0):
         """Calculate the n-th moment of histogram about the value c.

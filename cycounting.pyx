@@ -98,24 +98,3 @@ def count(np.ndarray[datatype, ndim=1] events,
         counts += 1
 
     return offset, counts
-
-
-def count2(np.ndarray[datatype, ndim=1] events,
-           datatype delta,
-           datatype offset,
-           unsigned long counts,
-           counting_trace):
-
-    cdef datatype event
-
-    for event in events:
-
-        while ((offset + delta) < event):
-
-            trace.append(counts)
-            counts = 0
-            offset += delta
-
-        counts += 1
-
-    return offset, counts

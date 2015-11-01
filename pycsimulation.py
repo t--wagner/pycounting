@@ -19,8 +19,8 @@ class ROsc(object):
         rate = self._rate0 + self._amp * np.sin(self._pha + 2 * np.pi * x * self._freq)
         self._c = cycle(rate)
 
-    def next(self):
-        return self._c.next()
+    def __next__(self):
+        return next(self._c)
 
     def __iter__(self):
         return self
@@ -59,7 +59,7 @@ class BiTrace(object):
     def __iter__(self):
         return self
 
-    def next(self):
+    def __next__(self):
 
         # Get rate for current state
         rate = self._rates[self._state]
@@ -97,7 +97,7 @@ class BiTrace(object):
         if not length:
             length = self._sampling_rate
 
-        return [self.next() for i in xrange(length)]
+        return [next(self) for i in range(length)]
 
 
 class BiSignal(object):
@@ -125,7 +125,7 @@ class BiSignal(object):
 
             # Wahrscheinlichkeit ändern falls keine Kon
             try:
-                rate = rate.next()
+                rate = next(rate)
             except AttributeError:
                 pass
 
@@ -157,8 +157,8 @@ class BiSignal(object):
 
         event_generator = self.__iter__()
 
-        for event_nr in xrange(nr):
-            yield event_generator.next()
+        for event_nr in range(nr):
+            yield next(event_generator)
 
     def range(self, length, start_position=None):
 
